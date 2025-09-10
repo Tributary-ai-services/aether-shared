@@ -1,0 +1,262 @@
+version: '3.8'
+
+# Shared Infrastructure Services
+# Run this first: docker-compose -f docker-compose.shared-infrastructure.yml up -d
+# Then run individual service compose files
+
+services:
+  # Shared Redis Cache
+  redis-shared:
+    image: redis:7-alpine
+    container_name: tas-redis-shared
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_shared_data:/data
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
+      - tas-shared-network
+
+  # Shared PostgreSQL Database  
+  postgres-shared:
+    image: postgres:15-alpine
+    container_name: tas-postgres-shared
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=tas_shared
+      - POSTGRES_USER=${POSTGRES_USER:-tasuser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-taspassword}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_shared_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tasuser}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - tas-shared-network
+
+  # Shared Kafka (with Zookeeper)
+  zookeeper-shared:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: tas-zookeeper-shared
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_shared_data:/var/lib/zookeeper/data
+      - zookeeper_shared_logs:/var/lib/zookeeper/log
+    restart: unless-stopped
+    networks:
+      - tas-shared-network
+
+  kafka-shared:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: tas-kafka-shared
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-shared:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_HOST://kafka-shared:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_shared_data:/var/lib/kafka/data
+    depends_on:
+      - zookeeper-shared
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tas-shared-network
+
+  # Shared MinIO Object Storage
+  minio-shared:
+    image: minio/minio:latest
+    container_name: tas-minio-shared
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - minio_shared_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tas-shared-network
+
+  # Shared Prometheus Monitoring
+  prometheus-shared:
+    image: prom/prometheus:latest
+    container_name: tas-prometheus-shared
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./shared-monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./shared-monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_shared_data:/prometheus
+    restart: unless-stopped
+    networks:
+      - tas-shared-network
+
+  # Shared AlertManager
+  alertmanager-shared:
+    image: prom/alertmanager:latest
+    container_name: tas-alertmanager-shared
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./shared-monitoring/alertmanager:/etc/alertmanager:ro
+      - alertmanager_shared_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    restart: unless-stopped
+    networks:
+      - tas-shared-network
+
+  # Shared OpenTelemetry Collector
+  otel-collector-shared:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: tas-otel-collector-shared
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics
+      - "8889:8889"   # Prometheus exporter
+      - "13133:13133" # Health check
+    volumes:
+      - ./shared-monitoring/otel/otel-collector-audimodal.yml:/etc/otelcol-contrib/otel-collector.yaml:ro
+    command: ["--config=/etc/otelcol-contrib/otel-collector.yaml"]
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+    restart: unless-stopped
+    depends_on:
+      - prometheus-shared
+    networks:
+      - tas-shared-network
+
+  # Shared Grafana Visualization
+  grafana-shared:
+    image: grafana/grafana:latest
+    container_name: tas-grafana-shared
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource,grafana-piechart-panel
+    volumes:
+      - grafana_shared_data:/var/lib/grafana
+      - ./shared-monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./shared-monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+    depends_on:
+      - prometheus-shared
+    networks:
+      - tas-shared-network
+
+  # Shared Keycloak Authentication  
+  keycloak-db-shared:
+    image: postgres:15-alpine  
+    container_name: tas-keycloak-db-shared
+    environment:
+      - POSTGRES_DB=keycloak
+      - POSTGRES_USER=keycloak
+      - POSTGRES_PASSWORD=${KEYCLOAK_DB_PASSWORD:-keycloak123}
+    volumes:
+      - keycloak_db_shared_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - tas-shared-network
+
+  keycloak-shared:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: tas-keycloak-shared
+    command: start-dev
+    ports:
+      - "8081:8080"
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin123}
+      - KC_DB=postgres
+      - KC_DB_URL_HOST=keycloak-db-shared
+      - KC_DB_URL_DATABASE=keycloak
+      - KC_DB_USERNAME=keycloak
+      - KC_DB_PASSWORD=${KEYCLOAK_DB_PASSWORD:-keycloak123}
+    depends_on:
+      - keycloak-db-shared
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      tas-shared-network:
+        aliases:
+          - localhost
+
+volumes:
+  redis_shared_data:
+    driver: local
+  postgres_shared_data:
+    driver: local
+  zookeeper_shared_data:
+    driver: local
+  zookeeper_shared_logs:
+    driver: local
+  kafka_shared_data:
+    driver: local
+  minio_shared_data:
+    driver: local
+  prometheus_shared_data:
+    driver: local
+  alertmanager_shared_data:
+    driver: local
+  grafana_shared_data:
+    driver: local
+  keycloak_db_shared_data:
+    driver: local
+
+networks:
+  tas-shared-network:
+    name: tas-shared-network
+    driver: bridge
+    external: false

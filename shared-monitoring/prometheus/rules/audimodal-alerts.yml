@@ -1,0 +1,171 @@
+groups:
+  - name: audimodal_storage_alerts
+    interval: 30s
+    rules:
+      - alert: HighStorageUsage
+        expr: audimodal_storage_usage_percent > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: audimodal
+        annotations:
+          summary: "High storage usage detected"
+          description: "Storage usage is {{ $value }}% on {{ $labels.instance }}"
+      
+      - alert: StorageThroughputDegraded
+        expr: rate(audimodal_storage_throughput_mbps[5m]) < 10
+        for: 10m
+        labels:
+          severity: warning
+          service: audimodal
+        annotations:
+          summary: "Storage throughput degraded"
+          description: "Storage throughput is {{ $value }} MB/s on {{ $labels.instance }}"
+
+  - name: audimodal_processing_alerts
+    interval: 30s
+    rules:
+      - alert: ProcessingQueueBacklog
+        expr: audimodal_processing_queue_size > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: audimodal
+          processor: "{{ $labels.processor }}"
+        annotations:
+          summary: "Processing queue backlog detected"
+          description: "{{ $labels.processor }} queue size is {{ $value }}"
+      
+      - alert: HighProcessingErrorRate
+        expr: rate(audimodal_processing_errors_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: critical
+          service: audimodal
+        annotations:
+          summary: "High processing error rate"
+          description: "Processing error rate is {{ $value }} errors/sec for {{ $labels.processor }}"
+
+  - name: audimodal_ml_alerts
+    interval: 30s
+    rules:
+      - alert: MLAnalysisFailureRate
+        expr: rate(audimodal_ml_analysis_failure_total[5m]) / rate(audimodal_ml_analysis_requests_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: audimodal
+        annotations:
+          summary: "High ML analysis failure rate"
+          description: "ML analysis failure rate is {{ $value | humanizePercentage }}"
+      
+      - alert: EmbeddingGenerationSlow
+        expr: histogram_quantile(0.95, rate(audimodal_embeddings_generation_duration_seconds_bucket[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: audimodal
+        annotations:
+          summary: "Embedding generation is slow"
+          description: "95th percentile embedding generation time is {{ $value }}s"
+
+  - name: audimodal_dlp_alerts
+    interval: 30s
+    rules:
+      - alert: CriticalDLPViolation
+        expr: increase(audimodal_dlp_violations_total{severity="critical"}[1h]) > 0
+        labels:
+          severity: critical
+          service: audimodal
+        annotations:
+          summary: "Critical DLP violation detected"
+          description: "{{ $value }} critical DLP violations in the last hour"
+      
+      - alert: HighDLPFalsePositiveRate
+        expr: rate(audimodal_dlp_false_positives_total[1h]) / rate(audimodal_dlp_violations_total[1h]) > 0.2
+        for: 30m
+        labels:
+          severity: warning
+          service: audimodal
+        annotations:
+          summary: "High DLP false positive rate"
+          description: "DLP false positive rate is {{ $value | humanizePercentage }}"
+
+  - name: audimodal_api_alerts
+    interval: 30s
+    rules:
+      - alert: HighAPIErrorRate
+        expr: rate(audimodal_api_errors_total[5m]) / rate(audimodal_api_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: audimodal
+        annotations:
+          summary: "High API error rate"
+          description: "API error rate is {{ $value | humanizePercentage }}"
+      
+      - alert: APIResponseTimeSlow
+        expr: histogram_quantile(0.95, rate(audimodal_api_request_duration_seconds_bucket[5m])) > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: audimodal
+        annotations:
+          summary: "API response time is slow"
+          description: "95th percentile API response time is {{ $value }}s"
+      
+      - alert: AuthenticationFailureSpike
+        expr: rate(audimodal_api_auth_failures_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+          service: audimodal
+        annotations:
+          summary: "Authentication failure spike detected"
+          description: "{{ $value }} auth failures per second"
+
+  - name: audimodal_sync_alerts
+    interval: 30s
+    rules:
+      - alert: SyncOperationFailures
+        expr: rate(audimodal_sync_operations_total{status="failure"}[15m]) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+          service: audimodal
+          source: "{{ $labels.source }}"
+        annotations:
+          summary: "High sync failure rate for {{ $labels.source }}"
+          description: "Sync failure rate is {{ $value }} failures/sec"
+      
+      - alert: SyncRateLimitHit
+        expr: increase(audimodal_sync_errors_total{error_type="rate_limit"}[5m]) > 5
+        labels:
+          severity: warning
+          service: audimodal
+        annotations:
+          summary: "Sync rate limit errors detected"
+          description: "{{ $value }} rate limit errors in the last 5 minutes"
+
+  - name: audimodal_database_alerts
+    interval: 30s
+    rules:
+      - alert: DatabaseConnectionPoolExhausted
+        expr: audimodal_database_connections{status="waiting"} > 10
+        for: 5m
+        labels:
+          severity: critical
+          service: audimodal
+        annotations:
+          summary: "Database connection pool exhausted"
+          description: "{{ $value }} connections waiting"
+      
+      - alert: SlowDatabaseQueries
+        expr: histogram_quantile(0.95, rate(audimodal_database_query_duration_seconds_bucket[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: audimodal
+        annotations:
+          summary: "Slow database queries detected"
+          description: "95th percentile query time is {{ $value }}s for {{ $labels.query_type }} queries"
