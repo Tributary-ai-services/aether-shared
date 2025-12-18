@@ -1,13 +1,13 @@
 apiVersion: 1
 
 providers:
-  - name: 'AudiModal Dashboards'
+  - name: 'Aether Dashboards'
     orgId: 1
-    folder: 'AudiModal'
-    folderUid: audimodal
+    folder: 'Aether'
+    folderUid: aether
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30
     allowUiUpdates: true
     options:
-      path: /var/lib/grafana/dashboards/audimodal
+      path: /var/lib/grafana/dashboards/aether

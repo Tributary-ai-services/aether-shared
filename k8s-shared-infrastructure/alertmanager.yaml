@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager-shared
+  namespace: tas-shared
+  labels:
+    app: alertmanager-shared
+    component: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager-shared
+  template:
+    metadata:
+      labels:
+        app: alertmanager-shared
+        component: monitoring
+    spec:
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:latest
+        ports:
+        - containerPort: 9093
+          name: alertmanager
+        args:
+        - '--config.file=/etc/alertmanager/alertmanager.yml'
+        - '--storage.path=/alertmanager'
+        - '--web.external-url=http://localhost:9093'
+        - '--cluster.listen-address=0.0.0.0:9094'
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+        volumeMounts:
+        - name: alertmanager-config
+          mountPath: /etc/alertmanager
+        - name: alertmanager-data
+          mountPath: /alertmanager
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9093
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9093
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: alertmanager-config
+        configMap:
+          name: alertmanager-shared-config
+      - name: alertmanager-data
+        persistentVolumeClaim:
+          claimName: alertmanager-shared-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-shared
+  namespace: tas-shared
+  labels:
+    app: alertmanager-shared
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9093
+    targetPort: 9093
+    protocol: TCP
+    name: alertmanager
+  selector:
+    app: alertmanager-shared
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-shared-pvc
+  namespace: tas-shared
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-shared-config
+  namespace: tas-shared
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'localhost:587'
+      smtp_from: 'alertmanager@tas.yourdomain.com'
+      smtp_auth_username: ''
+      smtp_auth_password: ''
+      smtp_require_tls: false
+
+    route:
+      group_by: ['alertname']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'web.hook'
+
+    receivers:
+    - name: 'web.hook'
+      webhook_configs:
+      - url: 'http://127.0.0.1:5001/'
+        send_resolved: true
+
+    # Email notifications (uncomment and configure as needed)
+    # - name: 'email-notifications'
+    #   email_configs:
+    #   - to: 'admin@yourdomain.com'
+    #     subject: 'TAS Alert: {{ .GroupLabels.alertname }}'
+    #     body: |
+    #       {{ range .Alerts }}
+    #       Alert: {{ .Annotations.summary }}
+    #       Description: {{ .Annotations.description }}
+    #       Details:
+    #       {{ range .Labels.SortedPairs }} - {{ .Name }} = {{ .Value }}
+    #       {{ end }}
+    #       {{ end }}
+
+    # Slack notifications (uncomment and configure as needed)
+    # - name: 'slack-notifications'
+    #   slack_configs:
+    #   - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+    #     channel: '#alerts'
+    #     username: 'AlertManager'
+    #     title: 'TAS Alert'
+    #     text: 'Summary: {{ .CommonAnnotations.summary }}'
+
+    inhibit_rules:
+      - source_match:
+          severity: 'critical'
+        target_match:
+          severity: 'warning'
+        equal: ['alertname', 'dev', 'instance']

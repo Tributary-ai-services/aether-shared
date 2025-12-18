@@ -1,0 +1,190 @@
+// Alloy configuration for TAS Shared Infrastructure log collection
+// This configuration collects logs from Docker containers and forwards them to Loki
+
+logging {
+  level = "info"
+  format = "logfmt"
+}
+
+// Discovery of Docker containers
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+// Relabel Docker containers to create useful labels
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Skip system containers and non-TAS containers
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex = "(portainer|watchtower|nginx-proxy|.*-proxy|.*-lb)"
+    action = "drop"
+  }
+
+  // Set job label from container name - handle various naming patterns
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label = "job"
+    regex = "tas-(.*)-shared"
+    replacement = "${1}"
+  }
+
+  // Handle microservice container names
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label = "job"
+    regex = "(aether|aether-be|audimodal|tas-mcp|deeplake-api|llm-router).*"
+    replacement = "${1}"
+  }
+
+  // Fallback: use container name as job
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label = "job"
+    regex = "(.+)"
+    replacement = "${1}"
+  }
+
+  // Set instance label from container name
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label = "instance"
+  }
+
+  // Add container labels as metrics labels
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label = "compose_service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label = "compose_project"
+  }
+
+  // Add container image info
+  rule {
+    source_labels = ["__meta_docker_container_image"]
+    target_label = "container_image"
+  }
+
+  // Set the log path
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label = "__path__"
+    replacement = "/var/lib/docker/containers/${1}/${1}-json.log"
+  }
+}
+
+// Scrape logs from discovered containers
+loki.source.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.relabel.containers.output
+  refresh_interval = "30s"
+  labels = {
+    environment = "shared-infrastructure",
+  }
+  forward_to = [loki.process.parse_logs.receiver]
+}
+
+// Process and parse logs
+loki.process "parse_logs" {
+  forward_to = [loki.write.loki.receiver]
+
+  // Parse JSON logs for structured applications
+  stage.json {
+    expressions = {
+      level = "level",
+      timestamp = "timestamp", 
+      message = "message",
+      service = "service",
+    }
+  }
+
+  // Extract log level
+  stage.regex {
+    expression = "(?i)(?P<level>debug|info|warn|error|fatal)"
+    source = "message"
+  }
+
+  // Add labels for better filtering
+  stage.labels {
+    values = {
+      level = "",
+      service = "",
+    }
+  }
+
+  // Drop unwanted Docker metadata
+  stage.label_drop {
+    values = ["filename", "stream"]
+  }
+}
+
+// Send logs to Loki
+loki.write "loki" {
+  endpoint {
+    url = env("LOKI_ENDPOINT") + "/loki/api/v1/push"
+    
+    // Retry configuration
+    max_backoff_period = "5m"
+    max_backoff_retries = 10
+    min_backoff_period = "500ms"
+  }
+  
+  // External labels applied to all log streams
+  external_labels = {
+    cluster = "tas-shared",
+    environment = "development",
+  }
+}
+
+// Collect Alloy's own logs
+loki.source.file "alloy_logs" {
+  targets = [
+    {__path__ = "/tmp/alloy.log", job = "alloy"},
+  ]
+  forward_to = [loki.write.loki.receiver]
+}
+
+// System logs collection (optional)
+loki.source.file "system_logs" {
+  targets = [
+    {__path__ = "/var/log/syslog", job = "syslog"},
+    {__path__ = "/var/log/kern.log", job = "kernel"},
+  ]
+  forward_to = [loki.process.system_logs.receiver]
+}
+
+loki.process "system_logs" {
+  forward_to = [loki.write.loki.receiver]
+
+  // Parse syslog format
+  stage.regex {
+    expression = "^(?P<timestamp>\\S+\\s+\\d+\\s+\\d+:\\d+:\\d+)\\s+(?P<hostname>\\S+)\\s+(?P<service>\\S+)\\[?(?P<pid>\\d+)?\\]?:?\\s*(?P<message>.*)"
+  }
+
+  stage.labels {
+    values = {
+      hostname = "",
+      service = "",
+    }
+  }
+}
+
+// Prometheus metrics for monitoring Alloy itself
+prometheus.exporter.self "alloy" { }
+
+prometheus.scrape "alloy_metrics" {
+  targets = prometheus.exporter.self.alloy.targets
+  forward_to = [prometheus.remote_write.metrics.receiver]
+}
+
+// Send metrics to Prometheus (optional)
+prometheus.remote_write "metrics" {
+  endpoint {
+    url = "http://prometheus-shared:9090/api/v1/write"
+  }
+}

@@ -1,0 +1,326 @@
+# Main Dashboard Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dashboard-ingress
+  namespace: tas-shared
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - dashboard.tas.scharber.com
+    secretName: dashboard-tls
+  rules:
+  - host: dashboard.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: dashboard-shared
+            port:
+              number: 80
+
+---
+# Grafana Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: tas-shared
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Increase proxy buffer size for Grafana
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - grafana.tas.scharber.com
+    secretName: grafana-tls
+  rules:
+  - host: grafana.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana-shared
+            port:
+              number: 3000
+
+---
+# Prometheus Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus-ingress
+  namespace: tas-shared
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Optional: Add basic auth for additional security
+    # nginx.ingress.kubernetes.io/auth-type: basic
+    # nginx.ingress.kubernetes.io/auth-secret: prometheus-basic-auth
+    # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - Prometheus'
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - prometheus.tas.scharber.com
+    secretName: prometheus-tls
+  rules:
+  - host: prometheus.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus-shared
+            port:
+              number: 9090
+
+---
+# Keycloak Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak-ingress
+  namespace: tas-shared
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Increase proxy timeout for Keycloak startup
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Large client header buffers for Keycloak
+    nginx.ingress.kubernetes.io/large-client-header-buffers: "4 16k"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - keycloak.tas.scharber.com
+    secretName: keycloak-tls
+  rules:
+  - host: keycloak.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: keycloak-shared
+            port:
+              number: 8080
+
+---
+# pgAdmin Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pgadmin-ingress
+  namespace: tas-shared
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # pgAdmin specific settings
+    nginx.ingress.kubernetes.io/proxy-set-header: "X-Script-Name /pgadmin4"
+    nginx.ingress.kubernetes.io/proxy-set-header: "X-Scheme $scheme"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - pgadmin.tas.scharber.com
+    secretName: pgadmin-tls
+  rules:
+  - host: pgadmin.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: pgadmin-shared
+            port:
+              number: 80
+
+---
+# MinIO Console Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-console-ingress
+  namespace: tas-shared
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Increase body size for file uploads
+    nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - minio.tas.scharber.com
+    secretName: minio-console-tls
+  rules:
+  - host: minio.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: minio-shared
+            port:
+              number: 9001
+
+---
+# MinIO API Ingress (for API access)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-api-ingress
+  namespace: tas-shared
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Increase body size for file uploads
+    nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - minio-api.tas.scharber.com
+    secretName: minio-api-tls
+  rules:
+  - host: minio-api.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: minio-shared
+            port:
+              number: 9000
+
+---
+# AlertManager Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: alertmanager-ingress
+  namespace: tas-shared
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Optional: Add basic auth for additional security
+    # nginx.ingress.kubernetes.io/auth-type: basic
+    # nginx.ingress.kubernetes.io/auth-secret: alertmanager-basic-auth
+    # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - AlertManager'
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - alerts.tas.scharber.com
+    secretName: alertmanager-tls
+  rules:
+  - host: alerts.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: alertmanager-shared
+            port:
+              number: 9093
+
+---
+# Wildcard Certificate (Alternative to individual certificates)
+# Uncomment this section if you prefer a single wildcard certificate
+# and comment out individual certificate configurations above
+#
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: tas-wildcard-cert
+#   namespace: tas-shared
+# spec:
+#   secretName: tas-wildcard-tls
+#   issuerRef:
+#     name: letsencrypt-prod
+#     kind: ClusterIssuer
+#   dnsNames:
+#   - "*.tas.yourdomain.com"
+#   - "tas.yourdomain.com"
+
+---
+# Loki Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loki-ingress
+  namespace: tas-shared
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Increase proxy timeouts for log queries
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - loki.tas.scharber.com
+    secretName: loki-tls
+  rules:
+  - host: loki.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: loki-shared
+            port:
+              number: 3100
+
+---
+# Basic Auth Secrets (uncomment and create if you want additional auth)
+# kubectl create secret generic prometheus-basic-auth \
+#   --from-literal=auth='admin:$2y$10$...' \
+#   -n tas-shared
+#
+# kubectl create secret generic alertmanager-basic-auth \
+#   --from-literal=auth='admin:$2y$10$...' \
+#   -n tas-shared
+#
+# To generate the password hash:
+# htpasswd -nb admin yourpassword

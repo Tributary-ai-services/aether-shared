@@ -40,6 +40,21 @@ scrape_configs:
     metrics_path: '/metrics/prometheus'  # Prometheus formatted endpoint
     scrape_interval: 10s
 
+  # LLM Router WAF
+  - job_name: 'llm-router'
+    static_configs:
+      - targets: ['llm-router-aether-app:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'llm-router-aether'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'llm-router'
+
   # Add other services when they're actually running and exposing metrics
   # Uncomment these when the services are deployed with metrics endpoints:
   

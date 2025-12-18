@@ -1,0 +1,164 @@
+# Centralized Configuration Management
+# This file provides configurable environment variables matching the Docker Compose .env pattern
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tas-shared-config
+  namespace: tas-shared
+  labels:
+    app: tas-shared-infrastructure
+    component: configuration
+data:
+  # Database Configuration
+  POSTGRES_DB: "tas_shared"
+  POSTGRES_USER: "tasuser"
+  PGADMIN_EMAIL: "admin@example.com"
+  
+  # MinIO Configuration
+  MINIO_ROOT_USER: "minioadmin"
+  
+  # Keycloak Configuration
+  KEYCLOAK_ADMIN: "admin"
+  KEYCLOAK_DB_USER: "keycloak"
+  KEYCLOAK_DB_NAME: "keycloak"
+  
+  # Environment
+  ENVIRONMENT: "kubernetes"
+  
+  # Service URLs (for cross-service communication)
+  REDIS_URL: "redis://redis-shared.tas-shared:6379/0"
+  REDIS_HOST: "redis-shared.tas-shared"
+  REDIS_PORT: "6379"
+  
+  POSTGRES_HOST: "postgres-shared.tas-shared"
+  POSTGRES_PORT: "5432"
+  DATABASE_URL: "postgresql://tasuser:${POSTGRES_PASSWORD}@postgres-shared.tas-shared:5432/tas_shared"
+  
+  KAFKA_BROKERS: "kafka-shared.tas-shared:9092"
+  KAFKA_HOST: "kafka-shared.tas-shared"
+  KAFKA_PORT: "9092"
+  
+  MINIO_ENDPOINT: "http://minio-shared.tas-shared:9000"
+  MINIO_API_URL: "http://minio-shared.tas-shared:9000"
+  MINIO_CONSOLE_URL: "http://minio-shared.tas-shared:9001"
+  S3_ENDPOINT: "http://minio-shared.tas-shared:9000"
+  
+  KEYCLOAK_URL: "http://keycloak-shared.tas-shared:8080"
+  KEYCLOAK_INTERNAL_URL: "http://keycloak-shared.tas-shared:8080"
+  
+  PROMETHEUS_URL: "http://prometheus-shared.tas-shared:9090"
+  GRAFANA_URL: "http://grafana-shared.tas-shared:3000"
+  ALERTMANAGER_URL: "http://alertmanager-shared.tas-shared:9093"
+  
+  # OpenTelemetry Configuration
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector-shared.tas-shared:4318"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector-shared.tas-shared:4318/v1/traces"
+  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://otel-collector-shared.tas-shared:4318/v1/metrics"
+
+---
+# External Secrets (using External Secrets Operator pattern)
+# Uncomment and configure if using external secret management
+# apiVersion: external-secrets.io/v1beta1
+# kind: SecretStore
+# metadata:
+#   name: tas-secret-store
+#   namespace: tas-shared
+# spec:
+#   provider:
+#     kubernetes:
+#       server:
+#         caProvider:
+#           type: "ConfigMap"
+#           name: "kube-root-ca.crt"
+#           key: "ca.crt"
+#       auth:
+#         serviceAccount:
+#           name: "tas-shared-secret-sa"
+
+---
+# Environment-specific ConfigMap overlays
+# These can be used with Kustomize for different environments
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tas-shared-config-dev
+  namespace: tas-shared
+  labels:
+    app: tas-shared-infrastructure
+    component: configuration
+    environment: development
+data:
+  ENVIRONMENT: "development"
+  LOG_LEVEL: "debug"
+  # Override any dev-specific configurations here
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tas-shared-config-staging
+  namespace: tas-shared
+  labels:
+    app: tas-shared-infrastructure
+    component: configuration
+    environment: staging
+data:
+  ENVIRONMENT: "staging"
+  LOG_LEVEL: "info"
+  # Override any staging-specific configurations here
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tas-shared-config-prod
+  namespace: tas-shared
+  labels:
+    app: tas-shared-infrastructure
+    component: configuration
+    environment: production
+data:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "warn"
+  # Override any production-specific configurations here
+  
+---
+# Service Account for secret access
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tas-shared-secret-sa
+  namespace: tas-shared
+  labels:
+    app: tas-shared-infrastructure
+    component: configuration
+
+---
+# ClusterRole for cross-namespace service discovery
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tas-shared-service-discovery
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tas-shared-service-discovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tas-shared-service-discovery
+subjects:
+- kind: ServiceAccount
+  name: tas-shared-secret-sa
+  namespace: tas-shared

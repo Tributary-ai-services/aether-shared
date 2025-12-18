@@ -1,0 +1,666 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-shared
+  namespace: tas-shared
+  labels:
+    app: prometheus-shared
+    component: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus-shared
+  template:
+    metadata:
+      labels:
+        app: prometheus-shared
+        component: monitoring
+    spec:
+      serviceAccountName: prometheus-shared-sa
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        ports:
+        - containerPort: 9090
+          name: prometheus
+        args:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus'
+        - '--web.console.libraries=/etc/prometheus/console_libraries'
+        - '--web.console.templates=/etc/prometheus/consoles'
+        - '--storage.tsdb.retention.time=200h'
+        - '--web.enable-lifecycle'
+        - '--web.enable-remote-write-receiver'
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+        - name: prometheus-data
+          mountPath: /prometheus
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9090
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-shared-config
+      - name: prometheus-data
+        persistentVolumeClaim:
+          claimName: prometheus-shared-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-shared
+  namespace: tas-shared
+  labels:
+    app: prometheus-shared
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: server
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: prometheus
+  selector:
+    app: prometheus-shared
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-shared-pvc
+  namespace: tas-shared
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-shared-config
+  namespace: tas-shared
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    # AlertManager configuration
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager-shared:9093
+
+    # Load rules once and periodically evaluate them
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
+    scrape_configs:
+      # Prometheus itself
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # AlertManager
+      - job_name: 'alertmanager'
+        static_configs:
+          - targets: ['alertmanager-shared:9093']
+        metrics_path: '/metrics'
+        scrape_interval: 30s
+
+      # OpenTelemetry Collector
+      - job_name: 'otel-collector'
+        static_configs:
+          - targets: ['otel-collector-shared:8888']
+        metrics_path: '/metrics'
+        scrape_interval: 30s
+
+      # Redis Exporter
+      - job_name: 'redis-shared'
+        static_configs:
+          - targets: ['redis-exporter:9121']
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+
+      # PostgreSQL Exporter
+      - job_name: 'postgres-shared'
+        static_configs:
+          - targets: ['postgres-exporter:9187']
+        metrics_path: '/metrics'
+        scrape_interval: 15s
+
+      # Kafka Exporter
+      - job_name: 'kafka-shared'
+        static_configs:
+          - targets: ['kafka-exporter:9308']
+        metrics_path: '/metrics'
+        scrape_interval: 30s
+
+      # MinIO metrics (built-in Prometheus endpoint)
+      - job_name: 'minio-shared'
+        static_configs:
+          - targets: ['minio-shared:9000']
+        metrics_path: '/minio/v2/metrics/cluster'
+        scrape_interval: 30s
+
+      # Keycloak metrics (enabled with KC_METRICS_ENABLED=true)
+      - job_name: 'keycloak-shared'
+        static_configs:
+          - targets: ['keycloak-shared:8080']
+        metrics_path: '/metrics'
+        scrape_interval: 30s
+
+      # Shared infrastructure services (Kubernetes service discovery)
+      - job_name: 'kubernetes-services'
+        kubernetes_sd_configs:
+        - role: service
+          namespaces:
+            names:
+            - tas-shared
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: service
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+
+      # Application services (cross-namespace discovery)
+      - job_name: 'aether-backend'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - aether
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: aether-backend
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: service
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+
+      - job_name: 'deeplake-service'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - deeplake
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: deeplake-service
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: service
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+
+      - job_name: 'audimodal'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - audimodal
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: audimodal-app
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: service
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        metrics_path: '/metrics/prometheus'
+
+      - job_name: 'llm-router'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - llm-router
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: llm-router.*
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: service
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+
+      - job_name: 'tas-mcp-server'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - tas-mcp
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: tas-mcp-server
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: service
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+
+---
+# OpenTelemetry Collector Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector-shared
+  namespace: tas-shared
+  labels:
+    app: otel-collector-shared
+    component: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector-shared
+  template:
+    metadata:
+      labels:
+        app: otel-collector-shared
+        component: observability
+    spec:
+      containers:
+      - name: otel-collector
+        image: otel/opentelemetry-collector-contrib:latest
+        ports:
+        - containerPort: 4317
+          name: otlp-grpc
+        - containerPort: 4318
+          name: otlp-http
+        - containerPort: 8888
+          name: metrics
+        - containerPort: 8889
+          name: prom-exporter
+        - containerPort: 13133
+          name: health-check
+        command:
+        - /otelcol-contrib
+        - --config=/etc/otelcol-contrib/otel-collector.yaml
+        env:
+        - name: ENVIRONMENT
+          value: "kubernetes"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: otel-collector-config
+          mountPath: /etc/otelcol-contrib
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: otel-collector-config
+        configMap:
+          name: otel-collector-shared-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector-shared
+  namespace: tas-shared
+  labels:
+    app: otel-collector-shared
+spec:
+  type: ClusterIP
+  ports:
+  - port: 4317
+    targetPort: 4317
+    protocol: TCP
+    name: otlp-grpc
+  - port: 4318
+    targetPort: 4318
+    protocol: TCP
+    name: otlp-http
+  - port: 8888
+    targetPort: 8888
+    protocol: TCP
+    name: metrics
+  - port: 8889
+    targetPort: 8889
+    protocol: TCP
+    name: prom-exporter
+  - port: 13133
+    targetPort: 13133
+    protocol: TCP
+    name: health-check
+  selector:
+    app: otel-collector-shared
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-shared-config
+  namespace: tas-shared
+data:
+  otel-collector.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      
+      prometheus:
+        config:
+          scrape_configs:
+          - job_name: 'otel-collector'
+            scrape_interval: 10s
+            static_configs:
+            - targets: ['0.0.0.0:8888']
+
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 1024
+      
+      resource:
+        attributes:
+        - key: environment
+          value: kubernetes
+          action: upsert
+        - key: service.name
+          from_attribute: service
+          action: insert
+
+    exporters:
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+
+      debug:
+        verbosity: detailed
+
+      # Export to Prometheus (metrics)
+      prometheusremotewrite:
+        endpoint: "http://prometheus-shared:9090/api/v1/write"
+        tls:
+          insecure: true
+
+      # Export to Jaeger (traces) - uncomment if Jaeger is deployed
+      # jaeger:
+      #   endpoint: jaeger-collector:14250
+      #   tls:
+      #     insecure: true
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch, resource]
+          exporters: [debug]  # Add jaeger when available
+
+        metrics:
+          receivers: [otlp, prometheus]
+          processors: [batch, resource]
+          exporters: [prometheus, prometheusremotewrite]
+
+        logs:
+          receivers: [otlp]
+          processors: [batch, resource]
+          exporters: [debug]
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-shared
+  namespace: tas-shared
+  labels:
+    app: grafana-shared
+    component: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana-shared
+  template:
+    metadata:
+      labels:
+        app: grafana-shared
+        component: monitoring
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+          name: grafana
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-shared-secret
+              key: admin-password
+        - name: GF_PATHS_PROVISIONING
+          value: /etc/grafana/provisioning
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: grafana-data
+          mountPath: /var/lib/grafana
+        - name: grafana-provisioning-datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: grafana-provisioning-dashboards
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboards-llm-router
+          mountPath: /var/lib/grafana/dashboards/llm-router
+        - name: dashboards-audimodal
+          mountPath: /var/lib/grafana/dashboards/audimodal
+        - name: dashboards-loki
+          mountPath: /var/lib/grafana/dashboards/loki
+        - name: dashboards-deeplake
+          mountPath: /var/lib/grafana/dashboards/deeplake
+        - name: dashboards-aether
+          mountPath: /var/lib/grafana/dashboards/aether
+        - name: dashboards-infrastructure
+          mountPath: /var/lib/grafana/dashboards/infrastructure
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: grafana-data
+        persistentVolumeClaim:
+          claimName: grafana-shared-pvc
+      - name: grafana-provisioning-datasources
+        configMap:
+          name: grafana-shared-config
+      - name: grafana-provisioning-dashboards
+        configMap:
+          name: grafana-provisioning-dashboards
+      - name: dashboards-llm-router
+        configMap:
+          name: grafana-dashboards-llm-router
+      - name: dashboards-audimodal
+        configMap:
+          name: grafana-dashboards-audimodal
+      - name: dashboards-loki
+        configMap:
+          name: grafana-dashboards-loki
+      - name: dashboards-deeplake
+        configMap:
+          name: grafana-dashboards-deeplake
+      - name: dashboards-aether
+        configMap:
+          name: grafana-dashboards-aether
+      - name: dashboards-infrastructure
+        configMap:
+          name: grafana-dashboards-infrastructure
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-shared
+  namespace: tas-shared
+  labels:
+    app: grafana-shared
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3000
+    targetPort: 3000
+    protocol: TCP
+    name: grafana
+  selector:
+    app: grafana-shared
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-shared-pvc
+  namespace: tas-shared
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-shared-secret
+  namespace: tas-shared
+type: Opaque
+data:
+  admin-password: YWRtaW4xMjM=  # admin123 (base64)
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-shared-config
+  namespace: tas-shared
+data:
+  datasources.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus-shared:9090
+        isDefault: true
+        editable: true
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki-shared:3100
+        editable: true
+      - name: AlertManager
+        type: alertmanager
+        access: proxy
+        url: http://alertmanager-shared:9093
+        editable: true
+  
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+    - name: 'default'
+      orgId: 1
+      folder: ''
+      type: file
+      disableDeletion: false
+      editable: true
+      updateIntervalSeconds: 10
+      options:
+        path: /var/lib/grafana/dashboards
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-config
+  namespace: tas-shared
+data:
+  # Basic Kubernetes cluster overview dashboard
+  kubernetes-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "TAS Kubernetes Overview",
+        "description": "Overview of TAS shared infrastructure services in Kubernetes",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Service Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=~\"kubernetes-services|alertmanager|otel-collector\"}",
+                "legendFormat": "{{service}} - {{instance}}"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          }
+        ],
+        "time": {"from": "now-1h", "to": "now"},
+        "refresh": "5s",
+        "version": 1
+      }
+    }

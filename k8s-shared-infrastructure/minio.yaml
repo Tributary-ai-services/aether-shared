@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio-shared
+  namespace: tas-shared
+  labels:
+    app: minio-shared
+    component: storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio-shared
+  template:
+    metadata:
+      labels:
+        app: minio-shared
+        component: storage
+    spec:
+      containers:
+      - name: minio
+        image: minio/minio:latest
+        command:
+        - minio
+        - server
+        - /data
+        - --console-address
+        - :9001
+        ports:
+        - containerPort: 9000
+          name: minio-api
+        - containerPort: 9001
+          name: minio-console
+        env:
+        - name: MINIO_ROOT_USER
+          valueFrom:
+            secretKeyRef:
+              name: minio-shared-secret
+              key: root-user
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: minio-shared-secret
+              key: root-password
+        # Enable Prometheus metrics without authentication
+        - name: MINIO_PROMETHEUS_AUTH_TYPE
+          value: "public"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: minio-data
+          mountPath: /data
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /minio/health/ready
+            port: 9000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: minio-data
+        persistentVolumeClaim:
+          claimName: minio-shared-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-shared
+  namespace: tas-shared
+  labels:
+    app: minio-shared
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9000
+    targetPort: 9000
+    protocol: TCP
+    name: minio-api
+  - port: 9001
+    targetPort: 9001
+    protocol: TCP
+    name: minio-console
+  selector:
+    app: minio-shared
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-shared-pvc
+  namespace: tas-shared
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-shared-secret
+  namespace: tas-shared
+type: Opaque
+data:
+  root-user: bWluaW9hZG1pbg==  # minioadmin (base64)
+  root-password: bWluaW9hZG1pbjEyMw==  # minioadmin123 (base64)

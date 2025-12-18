@@ -1,0 +1,209 @@
+// Alloy configuration for local development
+// Optimized for private networks and local containers
+
+logging {
+  level = "info"
+  format = "logfmt"
+}
+
+// Discovery of local Docker containers
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+// Relabel containers for local development
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Skip system containers but keep all TAS-related containers
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex = "(portainer|watchtower|nginx-proxy|.*-proxy|.*-lb|kind-.*)"
+    action = "drop"
+  }
+
+  // Set job label from container name - prioritize service names
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label = "job"
+    regex = "(.+)"
+    replacement = "${1}"
+  }
+
+  // Fallback to container name if no compose service label
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label = "job"
+    regex = "(.+)"
+    replacement = "${1}"
+  }
+
+  // Set instance label from container name
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label = "instance"
+  }
+
+  // Add compose project label
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label = "compose_project"
+  }
+
+  // Add container image info for debugging
+  rule {
+    source_labels = ["__meta_docker_container_image"]
+    target_label = "container_image"
+  }
+
+  // Add network information for local development
+  rule {
+    source_labels = ["__meta_docker_network_mode"]
+    target_label = "network_mode"
+  }
+
+  // Set the log path
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label = "__path__"
+    replacement = "/var/lib/docker/containers/${1}/${1}-json.log"
+  }
+}
+
+// Collect logs from Docker containers
+loki.source.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.relabel.containers.output
+  refresh_interval = "30s"
+  labels = {
+    environment = "development",
+    cluster = "local-docker",
+  }
+  forward_to = [loki.process.parse_logs.receiver]
+}
+
+// Process and parse logs for development
+loki.process "parse_logs" {
+  forward_to = [loki.write.loki.receiver]
+
+  // Parse Docker JSON logs
+  stage.json {
+    expressions = {
+      level = "level",
+      timestamp = "time", 
+      message = "log",
+      service = "service",
+      stream = "stream",
+    }
+  }
+
+  // Extract log level from message content
+  stage.regex {
+    expression = "(?i)(?P<extracted_level>debug|info|warn|warning|error|fatal|panic)"
+    source = "message"
+  }
+
+  // Use extracted level if available, otherwise use Docker stream
+  stage.template {
+    source = "level"
+    template = "{{ if .extracted_level }}{{ .extracted_level }}{{ else }}{{ .stream }}{{ end }}"
+  }
+
+  // Add useful labels for development
+  stage.labels {
+    values = {
+      level = "",
+      stream = "",
+    }
+  }
+
+  // Clean up Docker metadata we don't need
+  stage.label_drop {
+    values = ["filename", "__meta_docker_container_id"]
+  }
+
+  // Add structured parsing for JSON logs from applications
+  stage.match {
+    selector = "{job=~\".*aether.*|.*audimodal.*|.*llm-router.*\"}"
+    stage.json {
+      expressions = {
+        msg = "msg",
+        component = "component", 
+        request_id = "request_id",
+        trace_id = "trace_id",
+      }
+    }
+    stage.labels {
+      values = {
+        component = "",
+      }
+    }
+  }
+}
+
+// Send logs to local Loki
+loki.write "loki" {
+  endpoint {
+    url = env("LOKI_ENDPOINT") + "/loki/api/v1/push"
+    
+    // Development settings - more aggressive retries
+    max_backoff_period = "1m"
+    max_backoff_retries = 5
+    min_backoff_period = "100ms"
+    timeout = "10s"
+  }
+  
+  external_labels = {
+    cluster = "local-development",
+    environment = "dev",
+  }
+}
+
+// Collect host system logs for development debugging
+loki.source.file "system_logs" {
+  targets = [
+    {__path__ = "/var/log/syslog", job = "syslog", environment = "host"},
+    {__path__ = "/var/log/kern.log", job = "kernel", environment = "host"},
+  ]
+  forward_to = [loki.process.system_logs.receiver]
+}
+
+loki.process "system_logs" {
+  forward_to = [loki.write.loki.receiver]
+
+  // Parse syslog format
+  stage.regex {
+    expression = "^(?P<timestamp>\\S+\\s+\\d+\\s+\\d+:\\d+:\\d+)\\s+(?P<hostname>\\S+)\\s+(?P<service>\\S+)\\[?(?P<pid>\\d+)?\\]?:?\\s*(?P<message>.*)"
+  }
+
+  stage.labels {
+    values = {
+      hostname = "",
+      service = "",
+    }
+  }
+}
+
+// Prometheus metrics for monitoring Alloy in development
+prometheus.exporter.self "alloy" { }
+
+prometheus.scrape "alloy_metrics" {
+  targets = prometheus.exporter.self.alloy.targets
+  forward_to = [prometheus.remote_write.metrics.receiver]
+  scrape_interval = "15s"
+}
+
+// Send metrics to local Prometheus
+prometheus.remote_write "metrics" {
+  endpoint {
+    url = env("PROMETHEUS_ENDPOINT") + "/api/v1/write"
+    send_exemplars = true
+  }
+  
+  // Development mode - send metrics even if Prometheus is down
+  wal {
+    truncate_frequency = "30s"
+    max_age = "30m"
+  }
+}

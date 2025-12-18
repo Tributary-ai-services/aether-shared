@@ -1,0 +1,221 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keycloak-db-shared
+  namespace: tas-shared
+  labels:
+    app: keycloak-db-shared
+    component: auth-database
+spec:
+  serviceName: keycloak-db-shared-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak-db-shared
+  template:
+    metadata:
+      labels:
+        app: keycloak-db-shared
+        component: auth-database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - name: postgres
+          containerPort: 5432
+          protocol: TCP
+        env:
+        - name: POSTGRES_DB
+          value: "keycloak"
+        - name: POSTGRES_USER
+          value: "keycloak"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-db-shared-secret
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        resources:
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U keycloak -d keycloak -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U keycloak -d keycloak -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: keycloak-db-storage
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: keycloak-db-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-db-shared
+  namespace: tas-shared
+  labels:
+    app: keycloak-db-shared
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: keycloak-db-shared
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-db-shared-secret
+  namespace: tas-shared
+type: Opaque
+data:
+  password: a2V5Y2xvYWsxMjM=  # keycloak123 (base64)
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak-shared
+  namespace: tas-shared
+  labels:
+    app: keycloak-shared
+    component: authentication
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak-shared
+  template:
+    metadata:
+      labels:
+        app: keycloak-shared
+        component: authentication
+    spec:
+      containers:
+      - name: keycloak
+        image: quay.io/keycloak/keycloak:23.0
+        command:
+        - /opt/keycloak/bin/kc.sh
+        - start-dev
+        ports:
+        - containerPort: 8080
+          name: keycloak
+        env:
+        - name: KEYCLOAK_ADMIN
+          value: "admin"
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-shared-secret
+              key: admin-password
+        - name: KC_DB
+          value: "postgres"
+        - name: KC_DB_URL_HOST
+          value: "keycloak-db-shared"
+        - name: KC_DB_URL_DATABASE
+          value: "keycloak"
+        - name: KC_DB_USERNAME
+          value: "keycloak"
+        - name: KC_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-db-shared-secret
+              key: password
+        # Proxy configuration for running behind nginx ingress
+        - name: KC_PROXY
+          value: "edge"
+        - name: KC_HOSTNAME_STRICT
+          value: "false"
+        - name: KC_HOSTNAME_STRICT_HTTPS
+          value: "false"
+        - name: KC_HTTP_ENABLED
+          value: "true"
+        - name: KC_HOSTNAME
+          value: "keycloak.tas.scharber.com"
+        # Enable metrics endpoint for Prometheus
+        - name: KC_METRICS_ENABLED
+          value: "true"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 90
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-shared
+  namespace: tas-shared
+  labels:
+    app: keycloak-shared
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: keycloak
+  selector:
+    app: keycloak-shared
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-shared-secret
+  namespace: tas-shared
+type: Opaque
+data:
+  admin-password: YWRtaW4xMjM=  # admin123 (base64)

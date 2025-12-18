@@ -1,0 +1,88 @@
+apiVersion: 1
+
+datasources:
+  # Development Prometheus
+  - name: Prometheus-Dev
+    type: prometheus
+    access: proxy
+    url: http://prometheus-shared:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      queryTimeout: 60s
+      timeInterval: 15s
+      exemplarTraceIdDestinations:
+        - datasourceUid: loki-dev
+          name: "Trace ID"
+          urlDisplayLabel: "View in Loki"
+    version: 1
+
+  # Development Loki
+  - name: Loki-Dev
+    type: loki
+    uid: loki-dev
+    access: proxy
+    url: http://loki-shared:3100
+    isDefault: false
+    editable: true
+    jsonData:
+      timeout: 60
+      maxLines: 5000
+      manageAlerts: false
+      # Derived fields for local development
+      derivedFields:
+        - datasourceUid: prometheus-dev
+          matcherRegex: "trace_id=(\\w+)"
+          name: "Trace"
+          url: "$${__value.raw}"
+        - datasourceUid: prometheus-dev
+          matcherRegex: "request_id=(\\w+)"
+          name: "Request"
+          url: "$${__value.raw}"
+    version: 1
+
+  # Local AlertManager (if running)
+  - name: AlertManager-Dev
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager-shared:9093
+    isDefault: false
+    editable: true
+    jsonData:
+      implementation: prometheus
+    version: 1
+
+  # Development-specific data sources for microservices
+  - name: Aether-Backend-Metrics
+    type: prometheus
+    access: proxy
+    url: http://aether-be_aether-backend_1:8080
+    isDefault: false
+    editable: true
+    jsonData:
+      httpMethod: GET
+      queryTimeout: 30s
+    version: 1
+
+  - name: AudiModal-Metrics
+    type: prometheus
+    access: proxy
+    url: http://audimodal-app:8084
+    isDefault: false
+    editable: true
+    jsonData:
+      httpMethod: GET
+      queryTimeout: 30s
+    version: 1
+
+  - name: LLM-Router-Metrics
+    type: prometheus
+    access: proxy
+    url: http://llm-router-aether-app:8086
+    isDefault: false
+    editable: true
+    jsonData:
+      httpMethod: GET
+      queryTimeout: 30s
+    version: 1

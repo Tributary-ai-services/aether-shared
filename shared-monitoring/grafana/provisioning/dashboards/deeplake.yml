@@ -1,13 +1,13 @@
 apiVersion: 1
 
 providers:
-  - name: 'AudiModal Dashboards'
+  - name: 'DeepLake API Dashboards'
     orgId: 1
-    folder: 'AudiModal'
-    folderUid: audimodal
+    folder: 'DeepLake'
+    folderUid: deeplake
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30
     allowUiUpdates: true
     options:
-      path: /var/lib/grafana/dashboards/audimodal
+      path: /var/lib/grafana/dashboards/deeplake

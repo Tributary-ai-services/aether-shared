@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin-shared
+  namespace: tas-shared
+  labels:
+    app: pgadmin-shared
+    component: database-admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgadmin-shared
+  template:
+    metadata:
+      labels:
+        app: pgadmin-shared
+        component: database-admin
+    spec:
+      containers:
+      - name: pgadmin
+        image: dpage/pgadmin4:latest
+        ports:
+        - containerPort: 80
+          name: pgadmin
+        env:
+        - name: PGADMIN_DEFAULT_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: pgadmin-shared-secret
+              key: default-email
+        - name: PGADMIN_DEFAULT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pgadmin-shared-secret
+              key: default-password
+        - name: PGADMIN_CONFIG_SERVER_MODE
+          value: "True"
+        - name: PGADMIN_LISTEN_PORT
+          value: "80"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: pgadmin-data
+          mountPath: /var/lib/pgadmin
+        livenessProbe:
+          httpGet:
+            path: /misc/ping
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /misc/ping
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: pgadmin-data
+        persistentVolumeClaim:
+          claimName: pgadmin-shared-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgadmin-shared
+  namespace: tas-shared
+  labels:
+    app: pgadmin-shared
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: pgadmin
+  selector:
+    app: pgadmin-shared
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgadmin-shared-pvc
+  namespace: tas-shared
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgadmin-shared-secret
+  namespace: tas-shared
+type: Opaque
+data:
+  default-email: YWRtaW5AZXhhbXBsZS5jb20=  # admin@example.com (base64)
+  default-password: YWRtaW4xMjM=  # admin123 (base64)

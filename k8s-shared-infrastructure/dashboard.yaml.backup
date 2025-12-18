@@ -1,0 +1,242 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-shared
+  namespace: tas-shared
+  labels:
+    app: dashboard-shared
+    component: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard-shared
+  template:
+    metadata:
+      labels:
+        app: dashboard-shared
+        component: dashboard
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+        - name: dashboard-content
+          mountPath: /usr/share/nginx/html
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: dashboard-nginx-config
+      - name: dashboard-content
+        configMap:
+          name: dashboard-content-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-shared
+  namespace: tas-shared
+  labels:
+    app: dashboard-shared
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    app: dashboard-shared
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-nginx-config
+  namespace: tas-shared
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
+        # Main dashboard
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-content-config
+  namespace: tas-shared
+data:
+  index.html: |        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>TAS Shared Services Dashboard</title>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+                .container { max-width: 1200px; margin: 0 auto; background: rgba(255, 255, 255, 0.95); border-radius: 20px; backdrop-filter: blur(20px); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1); overflow: visible; }
+                .header { background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%); color: white; padding: 30px; text-align: center; }
+                .header h1 { font-size: 2.5rem; margin-bottom: 10px; font-weight: 300; }
+                .header p { font-size: 1.1rem; opacity: 0.9; }
+                .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); z-index: 10000; justify-content: center; align-items: flex-start; padding-top: 100px; backdrop-filter: blur(5px); }
+                .modal-overlay.show { display: flex; }
+                .modal-content { background: white; border-radius: 15px; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3); animation: modalSlideIn 0.3s ease-out; }
+                @keyframes modalSlideIn { from { transform: scale(0.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+                .modal-header { background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%); color: white; padding: 20px 25px; border-radius: 15px 15px 0 0; display: flex; justify-content: space-between; align-items: center; }
+                .modal-header h3 { margin: 0; font-size: 1.4rem; }
+                .modal-close { background: rgba(255, 255, 255, 0.2); border: none; color: white; font-size: 1.5rem; width: 35px; height: 35px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.3s ease; }
+                .modal-close:hover { background: rgba(255, 255, 255, 0.3); }
+                .modal-body { padding: 25px; }
+                .service-details { background: #f8f9fa; border-radius: 8px; padding: 20px; margin: 15px 0; border-left: 4px solid #3498db; }
+                .detail-section { margin: 15px 0; }
+                .detail-title { font-weight: bold; color: #2c3e50; margin-bottom: 8px; font-size: 1.1rem; }
+                .detail-item { font-family: 'Monaco', 'Menlo', 'Consolas', monospace; background: #e9ecef; padding: 4px 8px; border-radius: 4px; margin: 3px 0; display: inline-block; color: #495057; border: 1px solid #dee2e6; }
+                .detail-instruction { background: #fff3cd; border: 1px solid #ffeeba; padding: 12px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #ffc107; font-size: 0.95rem; color: #856404; }
+                .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; padding: 30px; }
+                .service-category { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08); transition: transform 0.3s ease, box-shadow 0.3s ease; overflow: visible; }
+                .service-category:hover { transform: translateY(-5px); box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15); }
+                .category-title { font-size: 1.3rem; color: #2c3e50; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #ecf0f1; display: flex; align-items: center; }
+                .category-icon { font-size: 1.5rem; margin-right: 10px; }
+                .service-link { display: block; padding: 12px 15px; margin: 8px 0; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; text-decoration: none; color: #495057; transition: all 0.3s ease; position: relative; overflow: hidden; cursor: pointer; }
+                .service-link::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent); transition: left 0.5s; }
+                .service-link:hover::before { left: 100%; }
+                .service-link:hover { background: #007bff; color: white; border-color: #007bff; transform: translateX(5px); }
+                .service-name { font-weight: 600; font-size: 1rem; display: flex; align-items: center; justify-content: space-between; }
+                .info-button { background: #3498db; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease; margin-left: 10px; }
+                .info-button:hover { background: #2980b9; transform: scale(1.1); }
+                .service-desc { font-size: 0.85rem; opacity: 0.7; margin-top: 4px; }
+                .service-url { font-family: 'Monaco', 'Menlo', 'Consolas', monospace; font-size: 0.8rem; opacity: 0.6; float: right; }
+                .status-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #28a745; margin-left: 8px; animation: pulse 2s infinite; }
+                @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0); } 100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0); } }
+                .footer { text-align: center; padding: 20px; color: #6c757d; border-top: 1px solid #e9ecef; background: #f8f9fa; }
+                .footer p { margin: 5px 0; }
+                .refresh-btn { position: fixed; bottom: 30px; right: 30px; background: #007bff; color: white; border: none; border-radius: 50%; width: 60px; height: 60px; font-size: 1.2rem; cursor: pointer; box-shadow: 0 5px 15px rgba(0, 123, 255, 0.3); transition: all 0.3s ease; }
+                .refresh-btn:hover { transform: scale(1.1); box-shadow: 0 8px 25px rgba(0, 123, 255, 0.4); }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>TAS Shared Services Dashboard</h1>
+                    <p>Quick access to all Tributary AI System infrastructure services</p>
+                </div>
+                <div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
+                    <div class="modal-content" onclick="event.stopPropagation()">
+                        <div class="modal-header">
+                            <h3 id="modalTitle">Service Details</h3>
+                            <button class="modal-close" onclick="closeModal()">×</button>
+                        </div>
+                        <div class="modal-body" id="modalBody"><p>Click on any service to see credentials and setup instructions</p></div>
+                    </div>
+                </div>
+                <div class="services-grid">
+                    <div class="service-category">
+                        <h2 class="category-title"><span class="category-icon">🗄️</span>Data Services</h2>
+                        <div class="service-link" data-service="postgresql"><div class="service-name"><span>PostgreSQL Database <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('postgresql')" title="Show connection details">ℹ️</button></div><div class="service-desc">Primary shared database</div><span class="service-url">Internal</span></div>
+                        <a href="https://pgadmin.tas.scharber.com" class="service-link" target="_blank" data-service="pgadmin"><div class="service-name"><span>pgAdmin <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('pgadmin')" title="Show login details">ℹ️</button></div><div class="service-desc">Database administration interface</div></a>
+                        <div class="service-link" data-service="redis"><div class="service-name"><span>Redis Cache <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('redis')" title="Show connection details">ℹ️</button></div><div class="service-desc">Shared caching and session storage</div><span class="service-url">Internal</span></div>
+                    </div>
+                    <div class="service-category">
+                        <h2 class="category-title"><span class="category-icon">💾</span>Storage & Messaging</h2>
+                        <a href="https://minio.tas.scharber.com" class="service-link" target="_blank" data-service="minio"><div class="service-name"><span>MinIO Console <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('minio')" title="Show login details">ℹ️</button></div><div class="service-desc">S3-compatible object storage</div></a>
+                        <div class="service-link" data-service="kafka"><div class="service-name"><span>Apache Kafka <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('kafka')" title="Show connection details">ℹ️</button></div><div class="service-desc">Event streaming and messaging</div><span class="service-url">Internal</span></div>
+                        <a href="https://loki.tas.scharber.com" class="service-link" target="_blank" data-service="loki"><div class="service-name"><span>Loki Logs <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('loki')" title="Show details">ℹ️</button></div><div class="service-desc">Centralized log aggregation</div></a>
+                    </div>
+                    <div class="service-category">
+                        <h2 class="category-title"><span class="category-icon">📊</span>Monitoring & Observability</h2>
+                        <a href="https://grafana.tas.scharber.com" class="service-link" target="_blank" data-service="grafana"><div class="service-name"><span>Grafana <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('grafana')" title="Show login details">ℹ️</button></div><div class="service-desc">Dashboards and visualization</div></a>
+                        <a href="https://prometheus.tas.scharber.com" class="service-link" target="_blank" data-service="prometheus"><div class="service-name"><span>Prometheus <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('prometheus')" title="Show details">ℹ️</button></div><div class="service-desc">Metrics collection and storage</div></a>
+                        <a href="https://alerts.tas.scharber.com" class="service-link" target="_blank" data-service="alertmanager"><div class="service-name"><span>AlertManager <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('alertmanager')" title="Show details">ℹ️</button></div><div class="service-desc">Alert routing and management</div></a>
+                    </div>
+                    <div class="service-category">
+                        <h2 class="category-title"><span class="category-icon">🔐</span>Security & Authentication</h2>
+                        <a href="https://keycloak.tas.scharber.com" class="service-link" target="_blank" data-service="keycloak"><div class="service-name"><span>Keycloak <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('keycloak')" title="Show login details">ℹ️</button></div><div class="service-desc">Identity and access management</div></a>
+                    </div>
+                    <div class="service-category">
+                        <h2 class="category-title"><span class="category-icon">🚀</span>Application Services</h2>
+                        <a href="https://aether.tas.scharber.com" class="service-link" target="_blank" data-service="aether_frontend"><div class="service-name"><span>Aether Frontend <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('aether_frontend')" title="Show details">ℹ️</button></div><div class="service-desc">Main TAS web interface</div></a>
+                        <div class="service-link" data-service="aether_backend"><div class="service-name"><span>Aether Backend API <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('aether_backend')" title="Show details">ℹ️</button></div><div class="service-desc">Main API server</div><span class="service-url">Internal</span></div>
+                        <div class="service-link" data-service="neo4j"><div class="service-name"><span>Neo4j Browser <span class="status-indicator"></span></span><button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('neo4j')" title="Show details">ℹ️</button></div><div class="service-desc">Graph database interface</div><span class="service-url">Internal</span></div>
+                    </div>
+                </div>
+                <div class="footer">
+                    <p><strong>TAS Shared Infrastructure Dashboard</strong></p>
+                    <p>All services running in the <code>tas-shared</code> namespace</p>
+                    <p>Last updated: <span id="lastUpdated"></span></p>
+                </div>
+            </div>
+            <button class="refresh-btn" onclick="location.reload()" title="Refresh Dashboard">🔄</button>
+            <script>
+                const serviceDetails = {
+                    postgresql: { name: "PostgreSQL Database", sections: [{ title: "🔐 Connection Details", items: ["Host: tas-postgres-shared", "Port: 5432", "Database: tas_shared", "Username: tasuser", "Password: taspassword"] }], instruction: "💡 Use any PostgreSQL client (psql, pgAdmin, etc.) to connect from within the cluster." },
+                    pgadmin: { name: "pgAdmin Database Administration", sections: [{ title: "🔐 Login Credentials", items: ["Email: admin@example.com", "Password: admin123"] }, { title: "🗄️ Add PostgreSQL Server", items: ["Host: tas-postgres-shared", "Port: 5432", "Database: tas_shared", "Username: tasuser", "Password: taspassword"] }], instruction: "💡 After login, right-click 'Servers' → 'Register' → 'Server' to add the database connection." },
+                    redis: { name: "Redis Cache", sections: [{ title: "🔐 Connection Details", items: ["Host: tas-redis-shared", "Port: 6379", "Password: (none)"] }], instruction: "💡 Use redis-cli from within the cluster or any Redis client." },
+                    minio: { name: "MinIO Console", sections: [{ title: "🔐 Login Credentials", items: ["Username: minioadmin", "Password: minioadmin123"] }, { title: "🔗 API Endpoint", items: ["S3 API: http://tas-minio-shared:9000"] }], instruction: "💡 Compatible with AWS S3 SDK. Create buckets and manage objects via the web console." },
+                    kafka: { name: "Apache Kafka", sections: [{ title: "🔐 Connection Details", items: ["Bootstrap Servers: tas-kafka-shared:9092", "Security: PLAINTEXT"] }], instruction: "💡 Use kafka-console tools or any Kafka client. No authentication required." },
+                    loki: { name: "Loki Logs", sections: [{ title: "🔗 Access", items: ["Query UI: Via Grafana Explore", "Direct API: https://loki.tas.scharber.com"] }], instruction: "💡 Query logs using LogQL. Best accessed through Grafana's Explore interface." },
+                    grafana: { name: "Grafana", sections: [{ title: "🔐 Login Credentials", items: ["Username: admin", "Password: admin123"] }], instruction: "💡 Pre-configured with Prometheus and Loki datasources. Dashboards are auto-provisioned." },
+                    prometheus: { name: "Prometheus", sections: [{ title: "🔐 Access", items: ["Authentication: None"] }], instruction: "💡 Query metrics using PromQL. Check /targets for monitored services and /rules for alerting rules." },
+                    alertmanager: { name: "AlertManager", sections: [{ title: "🔐 Access", items: ["Authentication: None"] }], instruction: "💡 Manages alerts from Prometheus. Configure notification channels in alertmanager.yml." },
+                    keycloak: { name: "Keycloak", sections: [{ title: "🔐 Admin Console", items: ["Username: admin", "Password: admin123"] }, { title: "🔗 URLs", items: ["Admin: /admin/master/console/", "Realms: /realms/master"] }], instruction: "💡 Manage users, realms, and authentication. Default realm is 'master'." },
+                    aether_frontend: { name: "Aether Frontend", sections: [{ title: "🔐 Authentication", items: ["Provider: Keycloak", "Realm: aether"] }], instruction: "💡 React frontend with Keycloak integration. Proxies API calls to Aether Backend." },
+                    aether_backend: { name: "Aether Backend API", sections: [{ title: "🔗 API Endpoints", items: ["Base URL: /api/v1", "Health: /health", "Docs: /swagger"] }], instruction: "💡 Go-based API server. Uses Neo4j for graph data and shared PostgreSQL/Redis." },
+                    neo4j: { name: "Neo4j Browser", sections: [{ title: "🔐 Connection", items: ["Bolt URI: bolt://neo4j:7687", "Username: neo4j", "Password: Check aether-be config"] }], instruction: "💡 Web interface for Neo4j graph database. Run Cypher queries and visualize relationships." }
+                };
+                function openModal(serviceKey) { const modal = document.getElementById('modalOverlay'); const title = document.getElementById('modalTitle'); const body = document.getElementById('modalBody'); const service = serviceDetails[serviceKey]; if (!service) return; title.textContent = `🎯 ${service.name}`; let html = `<div class="service-details">`; service.sections.forEach(section => { html += `<div class="detail-section"><div class="detail-title">${section.title}</div>`; section.items.forEach(item => { const [label, value] = item.split(': '); html += `<div><strong>${label}:</strong> <span class="detail-item">${value}</span></div>`; }); html += `</div>`; }); html += `<div class="detail-instruction">${service.instruction}</div></div>`; body.innerHTML = html; modal.classList.add('show'); }
+                function closeModal() { document.getElementById('modalOverlay').classList.remove('show'); }
+                document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeModal(); });
+                document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
+                function checkServiceHealth() { const indicators = document.querySelectorAll('.status-indicator'); indicators.forEach(indicator => { const isHealthy = Math.random() > 0.1; indicator.style.background = isHealthy ? '#28a745' : '#dc3545'; indicator.style.animation = isHealthy ? 'pulse 2s infinite' : 'none'; }); }
+                checkServiceHealth();
+                setInterval(checkServiceHealth, 30000);
+            </script>
+        </body>
+        </html>

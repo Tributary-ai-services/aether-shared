@@ -1,0 +1,219 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aether-frontend-config
+  namespace: aether-be
+data:
+  VITE_AETHER_API_BASE: "http://aether-backend:8080"
+  VITE_AETHER_API_URL: "http://aether-backend:8080/api/v1"
+  VITE_AGENT_BUILDER_API_URL: "http://agent-builder:3000/api/v1"
+  VITE_KEYCLOAK_URL: "http://tas-keycloak-shared:8080"
+  VITE_KEYCLOAK_REALM: "master"
+  VITE_KEYCLOAK_CLIENT_ID: "aether-frontend"
+  VITE_DEV_MODE: "true"
+  VITE_AUDIMODAL_API_URL: "http://audimodal:8080/api/v1"
+  VITE_DEEPLAKE_API_URL: "http://deeplake-api:8000/api/v1"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aether-frontend-dev-credentials
+  namespace: aether-be
+type: Opaque
+stringData:
+  VITE_DEV_USERNAME: "john@scharber.com"
+  VITE_DEV_PASSWORD: "test123"
+  VITE_AUDIMODAL_API_KEY: "your-audimodal-api-key"
+  VITE_AUDIMODAL_TENANT_ID: "your-audimodal-tenant-id"
+  VITE_DEEPLAKE_API_KEY: "your-deeplake-api-key"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aether-frontend
+  namespace: aether-be
+  labels:
+    app: aether-frontend
+    component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aether-frontend
+  template:
+    metadata:
+      labels:
+        app: aether-frontend
+        component: frontend
+    spec:
+      containers:
+      - name: aether-frontend
+        image: registry-api.tas.scharber.com/aether-frontend:latest
+        imagePullPolicy: Always  # Pull from registry
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+        # Load config from ConfigMap
+        - name: VITE_AETHER_API_BASE
+          valueFrom:
+            configMapKeyRef:
+              name: aether-frontend-config
+              key: VITE_AETHER_API_BASE
+        - name: VITE_AETHER_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-frontend-config
+              key: VITE_AETHER_API_URL
+        - name: VITE_AGENT_BUILDER_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-frontend-config
+              key: VITE_AGENT_BUILDER_API_URL
+        - name: VITE_KEYCLOAK_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-frontend-config
+              key: VITE_KEYCLOAK_URL
+        - name: VITE_KEYCLOAK_REALM
+          valueFrom:
+            configMapKeyRef:
+              name: aether-frontend-config
+              key: VITE_KEYCLOAK_REALM
+        - name: VITE_KEYCLOAK_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: aether-frontend-config
+              key: VITE_KEYCLOAK_CLIENT_ID
+        - name: VITE_DEV_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: aether-frontend-config
+              key: VITE_DEV_MODE
+        - name: VITE_AUDIMODAL_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-frontend-config
+              key: VITE_AUDIMODAL_API_URL
+        - name: VITE_DEEPLAKE_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-frontend-config
+              key: VITE_DEEPLAKE_API_URL
+        # Load secrets from Secret
+        - name: VITE_DEV_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: aether-frontend-dev-credentials
+              key: VITE_DEV_USERNAME
+        - name: VITE_DEV_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: aether-frontend-dev-credentials
+              key: VITE_DEV_PASSWORD
+        - name: VITE_AUDIMODAL_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aether-frontend-dev-credentials
+              key: VITE_AUDIMODAL_API_KEY
+        - name: VITE_AUDIMODAL_TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: aether-frontend-dev-credentials
+              key: VITE_AUDIMODAL_TENANT_ID
+        - name: VITE_DEEPLAKE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aether-frontend-dev-credentials
+              key: VITE_DEEPLAKE_API_KEY
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aether-frontend
+  namespace: aether-be
+  labels:
+    app: aether-frontend
+    component: frontend
+spec:
+  selector:
+    app: aether-frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP
+---
+# Optional: NodePort service for local development access
+apiVersion: v1
+kind: Service
+metadata:
+  name: aether-frontend-nodeport
+  namespace: aether-be
+  labels:
+    app: aether-frontend
+    component: frontend
+spec:
+  selector:
+    app: aether-frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    nodePort: 30001
+    protocol: TCP
+  type: NodePort
+---
+# Aether Frontend Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aether-frontend-ingress
+  namespace: aether-be
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Increase proxy buffer size for React app
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+    # Enable websocket support for hot reload in dev mode
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/proxy-set-headers: "Connection keep-alive"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - aether.tas.scharber.com
+    secretName: aether-frontend-tls
+  rules:
+  - host: aether.tas.scharber.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: aether-frontend
+            port:
+              number: 80
