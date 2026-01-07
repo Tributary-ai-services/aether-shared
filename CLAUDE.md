@@ -6,6 +6,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the `aether-shared` repository, which provides shared infrastructure services for the TAS (Tributary AI System) platform. It contains Docker Compose configurations, monitoring setups, and management scripts for common services used across multiple TAS components.
 
+## Data Models & Schema Reference
+
+### Centralized Data Model Documentation Hub
+This repository hosts the **complete data model documentation** for all TAS services in a centralized location:
+
+**Location**: `data-models/`
+
+#### Cross-Service Documentation:
+- **Platform ERD** (`data-models/cross-service/diagrams/platform-erd.md`) - Complete entity relationship diagram showing all services
+- **Architecture Overview** (`data-models/cross-service/diagrams/architecture-overview.md`) - System-wide architecture with data flows
+- **User Onboarding Flow** (`data-models/cross-service/flows/user-onboarding.md`) - Multi-service user registration process
+- **Document Upload Flow** (`data-models/cross-service/flows/document-upload.md`) - End-to-end document processing pipeline
+- **ID Mapping Chain** (`data-models/cross-service/mappings/id-mapping-chain.md`) - Cross-service identifier relationships
+
+#### Service-Specific Data Models (38 Total Files):
+- **aether-be** (`data-models/aether-be/`) - Neo4j graph nodes and relationships (7 files)
+- **aether** (`data-models/aether/`) - React Redux store and API types (3 files)
+- **audimodal** (`data-models/audimodal/`) - PostgreSQL entities (3 files)
+- **deeplake-api** (`data-models/deeplake-api/`) - Vector database schemas (4 files)
+- **tas-llm-router** (`data-models/tas-llm-router/`) - LLM request/response formats (3 files)
+- **tas-mcp** (`data-models/tas-mcp/`) - Protocol buffer definitions (3 files)
+- **tas-agent-builder** (`data-models/tas-agent-builder/`) - Agent entity models
+- **tas-mcp-servers** (`data-models/tas-mcp-servers/`) - MCP server configurations
+- **tas-workflow-builder** (`data-models/tas-workflow-builder/`) - Workflow definitions
+- **keycloak** (`data-models/keycloak/`) - Identity and authentication models
+
+#### When to Reference Data Models:
+1. Before making schema changes that affect cross-service integration
+2. When designing new features that span multiple services
+3. When debugging data consistency issues across services
+4. When onboarding new developers to understand the complete platform architecture
+5. Before implementing new API endpoints that interact with shared infrastructure
+
+**Main Documentation Hub**: `data-models/README.md` - Complete navigation for all data model files, including index and developer guide
+
 ## Architecture
 
 ### Shared Infrastructure Services
