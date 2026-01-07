@@ -163,8 +163,9 @@ spec:
           value: "false"
         - name: KC_HTTP_ENABLED
           value: "true"
-        - name: KC_HOSTNAME
-          value: "keycloak.tas.scharber.com"
+        # KC_HOSTNAME not set - allows Keycloak to use actual request hostname
+        # Internal: http://keycloak-shared.tas-shared:8080/realms/aether
+        # External: https://keycloak.tas.scharber.com/realms/aether
         # Enable metrics endpoint for Prometheus
         - name: KC_METRICS_ENABLED
           value: "true"

@@ -4,11 +4,11 @@ metadata:
   name: aether-frontend-config
   namespace: aether-be
 data:
-  VITE_AETHER_API_BASE: "http://aether-backend:8080"
-  VITE_AETHER_API_URL: "http://aether-backend:8080/api/v1"
+  VITE_AETHER_API_BASE: "https://aether-api.tas.scharber.com"
+  VITE_AETHER_API_URL: "https://aether-api.tas.scharber.com/api/v1"
   VITE_AGENT_BUILDER_API_URL: "http://agent-builder:3000/api/v1"
-  VITE_KEYCLOAK_URL: "http://tas-keycloak-shared:8080"
-  VITE_KEYCLOAK_REALM: "master"
+  VITE_KEYCLOAK_URL: "https://keycloak.tas.scharber.com"
+  VITE_KEYCLOAK_REALM: "aether"
   VITE_KEYCLOAK_CLIENT_ID: "aether-frontend"
   VITE_DEV_MODE: "true"
   VITE_AUDIMODAL_API_URL: "http://audimodal:8080/api/v1"
