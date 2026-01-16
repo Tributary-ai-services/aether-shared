@@ -80,6 +80,10 @@ metadata:
   namespace: tas-shared
   labels:
     app: minio-shared
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9000"
+    prometheus.io/path: "/minio/v2/metrics/cluster"
 spec:
   type: ClusterIP
   ports:

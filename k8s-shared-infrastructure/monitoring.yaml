@@ -178,7 +178,7 @@ data:
         metrics_path: '/metrics'
         scrape_interval: 30s
 
-      # Shared infrastructure services (Kubernetes service discovery)
+      # Shared infrastructure services (Kubernetes service discovery - annotation-based)
       - job_name: 'kubernetes-services'
         kubernetes_sd_configs:
         - role: service
@@ -186,6 +186,22 @@ data:
             names:
             - tas-shared
         relabel_configs:
+        # Only scrape services with prometheus.io/scrape: "true"
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        # Use prometheus.io/port annotation if present
+        - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+        # Use prometheus.io/path annotation if present
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        # Add service and namespace labels
         - source_labels: [__meta_kubernetes_service_name]
           target_label: service
         - source_labels: [__meta_kubernetes_namespace]
@@ -344,6 +360,10 @@ metadata:
   namespace: tas-shared
   labels:
     app: otel-collector-shared
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8889"
+    prometheus.io/path: "/metrics"
 spec:
   type: ClusterIP
   ports:
@@ -509,6 +529,8 @@ spec:
           mountPath: /var/lib/grafana/dashboards/aether
         - name: dashboards-infrastructure
           mountPath: /var/lib/grafana/dashboards/infrastructure
+        - name: dashboards-tas-applications
+          mountPath: /var/lib/grafana/dashboards/tas-applications
         livenessProbe:
           httpGet:
             path: /api/health
@@ -549,6 +571,9 @@ spec:
       - name: dashboards-infrastructure
         configMap:
           name: grafana-dashboards-infrastructure
+      - name: dashboards-tas-applications
+        configMap:
+          name: grafana-dashboards-tas-applications
 
 ---
 apiVersion: v1
@@ -558,6 +583,10 @@ metadata:
   namespace: tas-shared
   labels:
     app: grafana-shared
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3000"
+    prometheus.io/path: "/metrics"
 spec:
   type: ClusterIP
   ports:

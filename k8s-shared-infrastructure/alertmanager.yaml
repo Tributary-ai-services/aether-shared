@@ -68,6 +68,10 @@ metadata:
   namespace: tas-shared
   labels:
     app: alertmanager-shared
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9093"
+    prometheus.io/path: "/metrics"
 spec:
   type: ClusterIP
   ports:
