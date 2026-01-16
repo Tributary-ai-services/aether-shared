@@ -245,9 +245,8 @@ spec:
         ports:
         - containerPort: 9141
           name: metrics
-        env:
-        - name: ZK_HOSTS
-          value: "zookeeper-shared:2181"
+        args:
+        - -zk-hosts=zookeeper-shared:2181
         resources:
           requests:
             cpu: 50m
