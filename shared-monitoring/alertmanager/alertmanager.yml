@@ -1,0 +1,134 @@
+global:
+  # The smarthost and SMTP sender used for mail notifications.
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alertmanager@tas.local'
+  smtp_auth_username: 'alertmanager@tas.local'
+  smtp_auth_password: 'password'
+
+  # API URL to use when linking to Slack.
+  slack_api_url: '${SLACK_API_URL}'
+
+  # Default template
+  resolve_timeout: 5m
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  # The labels by which incoming alerts are grouped together. For example,
+  # multiple alerts coming in for cluster=A and alertname=LatencyHigh would
+  # be batched into a single group.
+  group_by: ['alertname', 'cluster', 'service']
+
+  # When a new group of alerts is created by an incoming alert, wait at
+  # least 'group_wait' to send the initial notification.
+  # This way ensures that you get multiple alerts for the same group that show
+  # up at the same time are batched together.
+  group_wait: 30s
+
+  # When the first notification was sent, wait 'group_interval' before
+  # sending a notification about new alerts that are added to a group.
+  group_interval: 5m
+
+  # If an alert has successfully been sent, wait 'repeat_interval' before
+  # resending them.
+  repeat_interval: 12h
+
+  # A default receiver
+  receiver: web.hook
+
+  # All the above attributes are inherited by all child routes and can
+  # overwritten on each.
+
+  routes:
+    # Route for critical alerts
+    - match:
+        severity: critical
+      receiver: critical-alerts
+      group_wait: 10s
+      repeat_interval: 1m
+
+    # Route for audimodal alerts
+    - match:
+        service: audimodal
+      receiver: audimodal-alerts
+      group_by: ['alertname', 'processor', 'source']
+      
+    # Route for DLP violations
+    - match:
+        alertname: CriticalDLPViolation
+      receiver: security-alerts
+      group_wait: 5s
+      repeat_interval: 30m
+
+    # Route for storage alerts
+    - match_re:
+        alertname: HighStorageUsage|StorageThroughputDegraded
+      receiver: infrastructure-alerts
+
+    # Route for authentication alerts
+    - match:
+        alertname: AuthenticationFailureSpike
+      receiver: security-alerts
+      group_wait: 5s
+
+receivers:
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5001/'
+
+  - name: 'critical-alerts'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5001/critical'
+        title: 'TAS Critical Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    # Uncomment and configure for Slack
+    # slack_configs:
+    #   - api_url: '${SLACK_API_URL}'
+    #     channel: '#alerts-critical'
+    #     title: 'TAS Critical Alert'
+    #     text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}{{ end }}'
+
+  - name: 'audimodal-alerts'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5001/audimodal'
+        title: 'Audimodal Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    # Uncomment and configure for Slack
+    # slack_configs:
+    #   - api_url: '${SLACK_API_URL}'
+    #     channel: '#audimodal-alerts'
+    #     title: 'Audimodal {{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}*{{ .Labels.alertname }}*\n{{ .Annotations.description }}{{ end }}'
+
+  - name: 'security-alerts'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5001/security'
+        title: 'Security Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    # Uncomment and configure for PagerDuty or email
+    # pagerduty_configs:
+    #   - routing_key: 'your-pagerduty-integration-key'
+    #     description: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+  - name: 'infrastructure-alerts'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5001/infrastructure'
+        title: 'Infrastructure Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+# Inhibit rules allow to mute a set of alerts given that another alert is firing.
+# We use this to mute any warning-level notifications if the same alert is already critical.
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    # Apply inhibition if the alertname is the same.
+    equal: ['alertname', 'cluster', 'service']
+
+  - source_match:
+      alertname: 'ProcessingQueueBacklog'
+    target_match_re:
+      alertname: 'HighProcessingErrorRate|MLAnalysisFailureRate'
+    equal: ['processor']

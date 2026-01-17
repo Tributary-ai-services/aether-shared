@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-shared
+  namespace: tas-shared
+  labels:
+    app: postgres-shared
+    component: database
+spec:
+  serviceName: postgres-shared-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-shared
+  template:
+    metadata:
+      labels:
+        app: postgres-shared
+        component: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - name: postgres
+          containerPort: 5432
+          protocol: TCP
+        env:
+        - name: POSTGRES_DB
+          value: "tas_shared"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-shared-secret
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-shared-secret
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        resources:
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 50Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-shared
+  namespace: tas-shared
+  labels:
+    app: postgres-shared
+    component: database
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgres-shared
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-shared-nodeport
+  namespace: tas-shared
+  labels:
+    app: postgres-shared
+    component: database
+spec:
+  type: NodePort
+  ports:
+  - port: 5432
+    targetPort: 5432
+    nodePort: 30432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgres-shared
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-shared-secret
+  namespace: tas-shared
+type: Opaque
+data:
+  username: dGFzdXNlcg==  # tasuser (base64)
+  password: dGFzcGFzc3dvcmQ=  # taspassword (base64)

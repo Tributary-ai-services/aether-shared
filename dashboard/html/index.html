@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TAS Shared Services Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: visible;  /* Changed from hidden to visible */
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+        
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        /* Modal Styles */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 10000;
+            justify-content: center;
+            align-items: flex-start;
+            padding-top: 100px;
+            backdrop-filter: blur(5px);
+        }
+        
+        .modal-overlay.show {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            animation: modalSlideIn 0.3s ease-out;
+        }
+        
+        @keyframes modalSlideIn {
+            from {
+                transform: scale(0.7);
+                opacity: 0;
+            }
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 20px 25px;
+            border-radius: 15px 15px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.4rem;
+        }
+        
+        .modal-close {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.3s ease;
+        }
+        
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .modal-body {
+            padding: 25px;
+        }
+        
+        .service-details {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+            border-left: 4px solid #3498db;
+        }
+        
+        .detail-section {
+            margin: 15px 0;
+        }
+        
+        .detail-title {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 8px;
+            font-size: 1.1rem;
+        }
+        
+        .detail-item {
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            background: #e9ecef;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin: 3px 0;
+            display: inline-block;
+            color: #495057;
+            border: 1px solid #dee2e6;
+        }
+        
+        .detail-instruction {
+            background: #fff3cd;
+            border: 1px solid #ffeeba;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 15px 0;
+            border-left: 4px solid #ffc107;
+            font-size: 0.95rem;
+            color: #856404;
+        }
+        
+        .services-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 30px;
+        }
+        
+        .service-category {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            overflow: visible;  /* Make sure tooltips can extend outside */
+        }
+        
+        .service-category:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
+        }
+        
+        .category-title {
+            font-size: 1.3rem;
+            color: #2c3e50;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #ecf0f1;
+            display: flex;
+            align-items: center;
+        }
+        
+        .category-icon {
+            font-size: 1.5rem;
+            margin-right: 10px;
+        }
+        
+        .service-link {
+            display: block;
+            padding: 12px 15px;
+            margin: 8px 0;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #495057;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        
+        .service-link::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+            transition: left 0.5s;
+        }
+        
+        .service-link:hover::before {
+            left: 100%;
+        }
+        
+        .service-link:hover {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+            transform: translateX(5px);
+        }
+        
+        .service-name {
+            font-weight: 600;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .info-button {
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            margin-left: 10px;
+        }
+        
+        .info-button:hover {
+            background: #2980b9;
+            transform: scale(1.1);
+        }
+        
+        .service-desc {
+            font-size: 0.85rem;
+            opacity: 0.7;
+            margin-top: 4px;
+        }
+        
+        .service-url {
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.8rem;
+            opacity: 0.6;
+            float: right;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #28a745;
+            margin-left: 8px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0); }
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+            border-top: 1px solid #e9ecef;
+            background: #f8f9fa;
+        }
+        
+        .footer p {
+            margin: 5px 0;
+        }
+        
+        .refresh-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            box-shadow: 0 5px 15px rgba(0, 123, 255, 0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .refresh-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 8px 25px rgba(0, 123, 255, 0.4);
+        }
+        
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>TAS Shared Services Dashboard</h1>
+            <p>Quick access to all Tributary AI System infrastructure services</p>
+        </div>
+        
+        <!-- Modal for Service Details -->
+        <div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3 id="modalTitle">Service Details</h3>
+                    <button class="modal-close" onclick="closeModal()">×</button>
+                </div>
+                <div class="modal-body" id="modalBody">
+                    <p>Click on any service to see credentials and setup instructions</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="services-grid">
+            <div class="service-category">
+                <h2 class="category-title">
+                    <span class="category-icon">🗄️</span>
+                    Data Services
+                </h2>
+                <div class="service-link" data-service="postgresql">
+                    <div class="service-name">
+                        <span>PostgreSQL Database <span class="status-indicator"></span></span>
+                        <button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('postgresql')" title="Show connection details">ℹ️</button>
+                    </div>
+                    <div class="service-desc">Primary shared database</div>
+                    <span class="service-url">:5432</span>
+                </div>
+                <a href="http://localhost:5050" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="pgladmin">
+                    <div class="service-name">
+                        <span>pgAdmin <span class="status-indicator"></span></span>
+                        <button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('pgadmin')" title="Show login details">ℹ️</button>
+                    </div>
+                    <div class="service-desc">Database administration interface</div>
+                    <span class="service-url">:5050</span>
+                </a>
+                <div class="service-link" data-service="redis">
+                    <div class="service-name">
+                        <span>Redis Cache <span class="status-indicator"></span></span>
+                        <button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); openModal('redis')" title="Show connection details">ℹ️</button>
+                    </div>
+                    <div class="service-desc">Shared caching and session storage</div>
+                    <span class="service-url">:6379</span>
+                </div>
+            </div>
+            
+            <div class="service-category">
+                <h2 class="category-title">
+                    <span class="category-icon">💾</span>
+                    Storage & Messaging
+                </h2>
+                <a href="http://localhost:9001" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="minio"
+                   data-modal="minio'"
+                   >
+                    <div class="service-name">MinIO Console <span class="status-indicator"></span></div>
+                    <div class="service-desc">S3-compatible object storage</div>
+                    <span class="service-url">:9001</span>
+                </a>
+                <div class="service-link"
+                     data-service="kafka"
+                     data-modal="kafka'"
+                     >
+                    <div class="service-name">Apache Kafka <span class="status-indicator"></span></div>
+                    <div class="service-desc">Event streaming and messaging</div>
+                    <span class="service-url">:9092</span>
+                </div>
+            </div>
+            
+            <div class="service-category">
+                <h2 class="category-title">
+                    <span class="category-icon">📊</span>
+                    Monitoring & Observability
+                </h2>
+                <a href="http://localhost:3000" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="grafana"
+                   data-modal="grafana'"
+                   >
+                    <div class="service-name">Grafana <span class="status-indicator"></span></div>
+                    <div class="service-desc">Dashboards and visualization</div>
+                    <span class="service-url">:3000</span>
+                </a>
+                <a href="http://localhost:9090" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="prometheus"
+                   data-modal="prometheus'"
+                   >
+                    <div class="service-name">Prometheus <span class="status-indicator"></span></div>
+                    <div class="service-desc">Metrics collection and storage</div>
+                    <span class="service-url">:9090</span>
+                </a>
+                <a href="http://localhost:9093" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="alertmanager"
+                   data-modal="alertmanager'"
+                   >
+                    <div class="service-name">AlertManager <span class="status-indicator"></span></div>
+                    <div class="service-desc">Alert routing and management</div>
+                    <span class="service-url">:9093</span>
+                </a>
+                <a href="http://localhost:13133" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="opentelemetry"
+                   data-modal="opentelemetry'"
+                   >
+                    <div class="service-name">OpenTelemetry Collector <span class="status-indicator"></span></div>
+                    <div class="service-desc">Distributed tracing and telemetry</div>
+                    <span class="service-url">:13133</span>
+                </a>
+            </div>
+            
+            <div class="service-category">
+                <h2 class="category-title">
+                    <span class="category-icon">🔐</span>
+                    Security & Authentication
+                </h2>
+                <a href="http://localhost:8081" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="keycloak"
+                   data-modal="keycloak'"
+                   >
+                    <div class="service-name">Keycloak <span class="status-indicator"></span></div>
+                    <div class="service-desc">Identity and access management</div>
+                    <span class="service-url">:8081</span>
+                </a>
+            </div>
+            
+            <div class="service-category">
+                <h2 class="category-title">
+                    <span class="category-icon">🚀</span>
+                    Application Services
+                </h2>
+                <a href="http://localhost:3001" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="aether_frontend"
+                   data-modal="aether_frontend'"
+                   >
+                    <div class="service-name">Aether Frontend <span class="status-indicator"></span></div>
+                    <div class="service-desc">Main TAS web interface</div>
+                    <span class="service-url">:3001</span>
+                </a>
+                <a href="http://localhost:8080" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="aether_backend"
+                   data-modal="aether_backend'"
+                   >
+                    <div class="service-name">Aether Backend API <span class="status-indicator"></span></div>
+                    <div class="service-desc">Main API server</div>
+                    <span class="service-url">:8080</span>
+                </a>
+                <a href="http://localhost:7474" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="neo4j"
+                   data-modal="neo4j'"
+                   >
+                    <div class="service-name">Neo4j Browser <span class="status-indicator"></span></div>
+                    <div class="service-desc">Graph database interface</div>
+                    <span class="service-url">:7474</span>
+                </a>
+                <a href="http://localhost:8084" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="eaiingest"
+                   data-modal="eaiingest'"
+                   >
+                    <div class="service-name">eAIIngest <span class="status-indicator"></span></div>
+                    <div class="service-desc">Audio/media processing pipeline</div>
+                    <span class="service-url">:8084</span>
+                </a>
+                <a href="http://localhost:8082" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="tas_mcp"
+                   data-modal="tas_mcp'"
+                   >
+                    <div class="service-name">TAS MCP Server <span class="status-indicator"></span></div>
+                    <div class="service-desc">Model Context Protocol server</div>
+                    <span class="service-url">:8082</span>
+                </a>
+                <a href="http://localhost:8000" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="deeplake"
+                   data-modal="deeplake'"
+                   >
+                    <div class="service-name">DeepLake API <span class="status-indicator"></span></div>
+                    <div class="service-desc">Vector database and ML datasets</div>
+                    <span class="service-url">:8000</span>
+                </a>
+                <a href="http://localhost:8086" 
+                   class="service-link" 
+                   target="_blank"
+                   data-service="llm_router"
+                   data-modal="llm_router'"
+                   >
+                    <div class="service-name">LLM Router <span class="status-indicator"></span></div>
+                    <div class="service-desc">Enterprise LLM routing with WAF</div>
+                    <span class="service-url">:8086</span>
+                </a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p><strong>TAS Shared Infrastructure Dashboard</strong></p>
+            <p>All services running on the <code>tas-shared-network</code></p>
+            <p>Last updated: <span id="lastUpdated"></span></p>
+        </div>
+    </div>
+    
+    <button class="refresh-btn" onclick="location.reload()" title="Refresh Dashboard">
+        🔄
+    </button>
+    
+    <script>
+        // Service details data
+        const serviceDetails = {
+            postgresql: {
+                name: "PostgreSQL Database",
+                sections: [
+                    {
+                        title: "🔐 Connection Details",
+                        items: [
+                            "Host: localhost",
+                            "Port: 5432", 
+                            "Database: tas_shared",
+                            "Username: tasuser",
+                            "Password: taspassword"
+                        ]
+                    }
+                ],
+                instruction: "💡 Use any PostgreSQL client (psql, pgAdmin, etc.) to connect directly."
+            },
+            pgadmin: {
+                name: "pgAdmin Database Administration",
+                sections: [
+                    {
+                        title: "🔐 Login Credentials",
+                        items: [
+                            "Email: admin@example.com",
+                            "Password: admin123"
+                        ]
+                    },
+                    {
+                        title: "🗄️ Add PostgreSQL Server",
+                        items: [
+                            "Host: postgres-shared",
+                            "Port: 5432",
+                            "Database: tas_shared", 
+                            "Username: tasuser",
+                            "Password: taspassword"
+                        ]
+                    }
+                ],
+                instruction: "💡 After login, right-click 'Servers' → 'Register' → 'Server' to add the database connection."
+            },
+            redis: {
+                name: "Redis Cache",
+                sections: [
+                    {
+                        title: "🔐 Connection Details",
+                        items: [
+                            "Host: localhost",
+                            "Port: 6379",
+                            "Password: (none)"
+                        ]
+                    }
+                ],
+                instruction: "💡 Use redis-cli: redis-cli -h localhost -p 6379 or any Redis client like RedisInsight."
+            },
+            minio: {
+                name: "MinIO Console",
+                sections: [
+                    {
+                        title: "🔐 Login Credentials",
+                        items: [
+                            "Username: minioadmin",
+                            "Password: minioadmin123"
+                        ]
+                    },
+                    {
+                        title: "🔗 API Endpoint",
+                        items: [
+                            "S3 API: http://localhost:9000"
+                        ]
+                    }
+                ],
+                instruction: "💡 Compatible with AWS S3 SDK. Create buckets and manage objects via the web console."
+            },
+            kafka: {
+                name: "Apache Kafka",
+                sections: [
+                    {
+                        title: "🔐 Connection Details",
+                        items: [
+                            "Bootstrap Servers: localhost:9092",
+                            "Security: PLAINTEXT"
+                        ]
+                    }
+                ],
+                instruction: "💡 Use kafka-console tools or any Kafka client. No authentication required. Example: kafka-console-producer --topic test --bootstrap-server localhost:9092"
+            },
+            grafana: {
+                name: "Grafana",
+                sections: [
+                    {
+                        title: "🔐 Login Credentials",
+                        items: [
+                            "Username: admin",
+                            "Password: admin123"
+                        ]
+                    }
+                ],
+                instruction: "💡 Pre-configured with Prometheus datasource. Dashboards are auto-provisioned from the shared-monitoring folder."
+            },
+            prometheus: {
+                name: "Prometheus",
+                sections: [
+                    {
+                        title: "🔐 Access",
+                        items: [
+                            "Authentication: None"
+                        ]
+                    }
+                ],
+                instruction: "💡 Query metrics using PromQL. Check /targets for monitored services and /rules for alerting rules."
+            },
+            alertmanager: {
+                name: "AlertManager",
+                sections: [
+                    {
+                        title: "🔐 Access",
+                        items: [
+                            "Authentication: None"
+                        ]
+                    }
+                ],
+                instruction: "💡 Manages alerts from Prometheus. Configure notification channels in alertmanager.yml."
+            },
+            opentelemetry: {
+                name: "OpenTelemetry Collector",
+                sections: [
+                    {
+                        title: "🔗 Endpoints",
+                        items: [
+                            "gRPC: :4317",
+                            "HTTP: :4318",
+                            "Health: :13133",
+                            "Metrics: :8888"
+                        ]
+                    }
+                ],
+                instruction: "💡 Send traces and metrics via OTLP protocol. Exports to Prometheus and other backends."
+            },
+            keycloak: {
+                name: "Keycloak",
+                sections: [
+                    {
+                        title: "🔐 Admin Console",
+                        items: [
+                            "Username: admin",
+                            "Password: admin123"
+                        ]
+                    },
+                    {
+                        title: "🔗 URLs",
+                        items: [
+                            "Admin: /admin/master/console/",
+                            "Realms: /realms/master"
+                        ]
+                    }
+                ],
+                instruction: "💡 Manage users, realms, and authentication. Default realm is 'master'."
+            },
+            aether_frontend: {
+                name: "Aether Frontend",
+                sections: [
+                    {
+                        title: "🔐 Authentication",
+                        items: [
+                            "Provider: Keycloak (localhost:8081)",
+                            "Realm: master"
+                        ]
+                    }
+                ],
+                instruction: "💡 React frontend with Keycloak integration. Proxies API calls to Aether Backend."
+            },
+            aether_backend: {
+                name: "Aether Backend API",
+                sections: [
+                    {
+                        title: "🔗 API Endpoints",
+                        items: [
+                            "Base URL: /api/v1",
+                            "Health: /health",
+                            "Docs: /swagger"
+                        ]
+                    }
+                ],
+                instruction: "💡 Go-based API server. Uses Neo4j for graph data and shared PostgreSQL/Redis."
+            },
+            neo4j: {
+                name: "Neo4j Browser",
+                sections: [
+                    {
+                        title: "🔐 Connection",
+                        items: [
+                            "Bolt URI: bolt://localhost:7687",
+                            "Username: neo4j",
+                            "Password: Check aether-be config"
+                        ]
+                    }
+                ],
+                instruction: "💡 Web interface for Neo4j graph database. Run Cypher queries and visualize relationships."
+            },
+            eaiingest: {
+                name: "eAIIngest",
+                sections: [
+                    {
+                        title: "🔑 API Access",
+                        items: [
+                            "API Key: dev-api-key",
+                            "Tenant ID: test-tenant-001"
+                        ]
+                    }
+                ],
+                instruction: "💡 Audio processing and AI transcription service. Uploads files to MinIO, metadata to PostgreSQL."
+            },
+            tas_mcp: {
+                name: "TAS MCP Server",
+                sections: [
+                    {
+                        title: "🔗 Endpoints",
+                        items: [
+                            "HTTP: :8082",
+                            "gRPC: :50052",
+                            "Health: :8083"
+                        ]
+                    }
+                ],
+                instruction: "💡 Context management and model interaction coordination for AI services."
+            },
+            deeplake: {
+                name: "DeepLake API",
+                sections: [
+                    {
+                        title: "🔗 Endpoints",
+                        items: [
+                            "HTTP: :8000",
+                            "gRPC: :50051",
+                            "Metrics: :9091"
+                        ]
+                    }
+                ],
+                instruction: "💡 Vector similarity search and ML dataset management. API key may be required."
+            },
+            llm_router: {
+                name: "LLM Router",
+                sections: [
+                    {
+                        title: "🔐 Authentication",
+                        items: [
+                            "Provider: Keycloak integration",
+                            "Vault: HashiCorp Vault for API keys"
+                        ]
+                    }
+                ],
+                instruction: "💡 Multi-provider LLM routing with cost optimization and security. Uses all shared infrastructure."
+            }
+        };
+        
+        function openModal(serviceKey) {
+            console.log('openModal called with:', serviceKey);
+            const modal = document.getElementById('modalOverlay');
+            const title = document.getElementById('modalTitle');
+            const body = document.getElementById('modalBody');
+            const service = serviceDetails[serviceKey];
+            
+            console.log('Modal elements:', {modal, title, body});
+            console.log('Service found:', service);
+            
+            if (!service) {
+                console.log('No service found for key:', serviceKey);
+                return;
+            }
+            
+            title.textContent = `🎯 ${service.name}`;
+            
+            let html = `<div class="service-details">`;
+            
+            service.sections.forEach(section => {
+                html += `
+                    <div class="detail-section">
+                        <div class="detail-title">${section.title}</div>
+                `;
+                section.items.forEach(item => {
+                    const [label, value] = item.split(': ');
+                    html += `<div><strong>${label}:</strong> <span class="detail-item">${value}</span></div>`;
+                });
+                html += `</div>`;
+            });
+            
+            html += `<div class="detail-instruction">${service.instruction}</div>`;
+            html += `</div>`;
+            
+            body.innerHTML = html;
+            modal.classList.add('show');
+            console.log('Modal should now be visible');
+        }
+        
+        function closeModal() {
+            const modal = document.getElementById('modalOverlay');
+            modal.classList.remove('show');
+        }
+        
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+        
+        // Add info buttons to all services
+        function addInfoButtons() {
+            const serviceLinks = document.querySelectorAll('.service-link[data-service]');
+            console.log('Found service links:', serviceLinks.length);
+            
+            serviceLinks.forEach(link => {
+                const serviceName = link.querySelector('.service-name');
+                const serviceKey = link.getAttribute('data-service');
+                
+                console.log('Processing service:', serviceKey);
+                
+                // Skip if already has an info button
+                if (serviceName.querySelector('.info-button')) {
+                    console.log('Already has info button:', serviceKey);
+                    return;
+                }
+                
+                // Restructure service name to include info button
+                const nameText = serviceName.textContent;
+                serviceName.innerHTML = `
+                    <span>${nameText}</span>
+                    <button class="info-button" onclick="event.preventDefault(); event.stopPropagation(); console.log('Button clicked for ${serviceKey}'); openModal('${serviceKey}')" title="Show details">ℹ️</button>
+                `;
+                console.log('Added info button to:', serviceKey);
+            });
+        }
+        
+        // Test function
+        function testModal() {
+            console.log('Test modal called');
+            openModal('postgresql');
+        }
+        
+        // Update the last updated timestamp
+        document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
+        
+        // Add info buttons to all services on page load
+        addInfoButtons();
+        
+        // Auto-refresh disabled - use manual refresh button instead
+        // setTimeout(() => {
+        //     location.reload();
+        // }, 1800000);
+        
+        // Service health check simulation (replace with actual health checks if needed)
+        function checkServiceHealth() {
+            const indicators = document.querySelectorAll('.status-indicator');
+            indicators.forEach(indicator => {
+                // Simulate different health states
+                const isHealthy = Math.random() > 0.1; // 90% chance of being healthy
+                if (isHealthy) {
+                    indicator.style.background = '#28a745';
+                } else {
+                    indicator.style.background = '#dc3545';
+                    indicator.style.animation = 'none';
+                }
+            });
+        }
+        
+        // Check health on page load and every 30 seconds
+        checkServiceHealth();
+        setInterval(checkServiceHealth, 30000);
+    </script>
+</body>
+</html>

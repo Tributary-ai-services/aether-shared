@@ -1,0 +1,68 @@
+# Development override for local private networks
+# Usage: docker-compose -f docker-compose.shared-infrastructure.yml -f docker-compose.dev.yml up -d
+
+services:
+  # Override Loki for local development (no MinIO dependency)
+  loki-shared:
+    environment:
+      - LOKI_MODE=dev
+    volumes:
+      - ./shared-monitoring/loki/loki-config-dev.yml:/etc/loki/loki-config.yml:ro
+    command: ["-config.file=/etc/loki/loki-config.yml", "-target=all"]
+
+  # Override Alloy for local development
+  alloy-shared:
+    environment:
+      - ALLOY_MODE=dev
+      - LOKI_ENDPOINT=http://loki-shared:3100
+      - PROMETHEUS_ENDPOINT=http://prometheus-shared:9090
+    volumes:
+      - ./shared-monitoring/alloy/alloy-config-dev.alloy:/etc/alloy/alloy-config.alloy:ro
+
+  # Override Grafana for local development
+  grafana-shared:
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=grafana-loki-datasource
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards,lokiExperimentalStreaming
+      - GF_USERS_ALLOW_SIGN_UP=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./shared-monitoring/grafana/provisioning/datasources/dev:/etc/grafana/provisioning/datasources
+
+  # Override Prometheus for local development
+  prometheus-shared:
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+      - '--web.enable-remote-write-receiver'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./shared-monitoring/prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro
+
+  # Local development dashboard with private network support
+  dashboard-shared:
+    environment:
+      - ENV_MODE=development
+      - PRIVATE_NETWORK=true
+    volumes:
+      - ./dashboard/dev:/usr/share/nginx/html
+
+networks:
+  tas-shared-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+
+# Development-specific volumes for faster iteration
+volumes:
+  grafana_dev_data:
+  prometheus_dev_data:
+  loki_dev_data:

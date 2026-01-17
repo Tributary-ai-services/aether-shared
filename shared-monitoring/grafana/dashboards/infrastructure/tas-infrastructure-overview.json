@@ -1,0 +1,169 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "gnetId": null,
+  "id": null,
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0}]},
+          "mappings": [{"options": {"0": {"text": "Down", "color": "red"}, "1": {"text": "Up", "color": "green"}}, "type": "value"}],
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "redis_up{job=\"redis-shared\"}", "refId": "A"}],
+      "title": "Redis",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0}]},
+          "mappings": [{"options": {"0": {"text": "Down", "color": "red"}, "1": {"text": "Up", "color": "green"}}, "type": "value"}]
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "pg_up{job=\"postgres-shared\"}", "refId": "A"}],
+      "title": "PostgreSQL",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 1}]},
+          "mappings": [{"options": {"match": "null", "result": {"text": "Down", "color": "red"}}, "type": "special"}]
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "kafka_brokers{job=\"kafka-shared\"}", "refId": "A"}],
+      "title": "Kafka",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 1}]},
+          "mappings": [{"options": {"match": "null", "result": {"text": "Down", "color": "red"}}, "type": "special"}]
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "minio_cluster_nodes_online_total{job=\"minio-shared\"}", "refId": "A"}],
+      "title": "MinIO",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 1}]},
+          "mappings": [{"options": {"match": "null", "result": {"text": "Down", "color": "red"}}, "type": "special"}]
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+      "id": 5,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "up{job=\"keycloak-shared\"}", "refId": "A"}],
+      "title": "Keycloak",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1},
+          "unit": "percent"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 6,
+      "targets": [
+        {"expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\",job=~\".*shared\"}[5m])))", "legendFormat": "CPU Usage", "refId": "A"}
+      ],
+      "title": "Overall CPU Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "percent"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 7,
+      "targets": [
+        {"expr": "100 * (1 - (node_memory_MemAvailable_bytes{job=~\".*shared\"} / node_memory_MemTotal_bytes{job=~\".*shared\"}))", "legendFormat": "Memory Usage", "refId": "A"}
+      ],
+      "title": "Overall Memory Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "id": 8,
+      "targets": [
+        {"expr": "sum(rate(container_network_receive_bytes_total{namespace=\"tas-shared\"}[5m]))", "legendFormat": "Network In", "refId": "A"},
+        {"expr": "sum(rate(container_network_transmit_bytes_total{namespace=\"tas-shared\"}[5m]))", "legendFormat": "Network Out", "refId": "B"}
+      ],
+      "title": "Network Traffic",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+      "id": 9,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {"expr": "ALERTS{namespace=\"tas-shared\",alertstate=\"firing\"}", "legendFormat": "{{alertname}}", "refId": "A"}
+      ],
+      "title": "Active Alerts",
+      "type": "stat"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["overview", "infrastructure", "tas"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "title": "TAS Infrastructure Overview",
+  "uid": "tas-infrastructure-overview",
+  "version": 1
+}

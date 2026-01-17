@@ -1,0 +1,190 @@
+# ClusterIssuer for Let's Encrypt Staging (for testing)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  labels:
+    app: cert-manager
+    component: cluster-issuer
+    environment: staging
+spec:
+  acme:
+    # You must replace this email address with your own.
+    # Let's Encrypt will use this to contact you about expiring
+    # certificates, and issues related to your account.
+    email: john@scharber.com
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      # Secret resource that will be used to store the account's private key.
+      name: letsencrypt-staging
+    # Add multiple challenge solvers for flexibility
+    solvers:
+    # HTTP01 solver using nginx ingress (for non-wildcard domains)
+    - http01:
+        ingress:
+          class: nginx
+          podTemplate:
+            metadata:
+              labels:
+                app: cert-manager-http01-solver
+            spec:
+              tolerations:
+              - key: node-role.kubernetes.io/master
+                operator: Equal
+                effect: NoSchedule
+
+---
+# ClusterIssuer for Let's Encrypt Production
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  labels:
+    app: cert-manager
+    component: cluster-issuer
+    environment: production
+spec:
+  acme:
+    # You must replace this email address with your own.
+    # Let's Encrypt will use this to contact you about expiring
+    # certificates, and issues related to your account.
+    email: john@scharber.com
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      # Secret resource that will be used to store the account's private key.
+      name: letsencrypt-prod
+    # Add multiple challenge solvers for flexibility
+    solvers:
+    # DNS01 solver using GoDaddy webhook
+    - dns01:
+        webhook:
+          groupName: acme.scharber.com
+          solverName: godaddy
+          config:
+            apiKeySecretRef:
+              name: godaddy-api-key
+              key: api-key
+            apiSecretSecretRef:
+              name: godaddy-api-key
+              key: api-secret
+            production: true
+            ttl: 600
+
+---
+# DNS Challenge solver examples (uncomment and configure if using DNS challenges for wildcard certs)
+
+# Cloudflare DNS01 ClusterIssuer
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-dns-cloudflare
+#   labels:
+#     app: cert-manager
+#     component: cluster-issuer
+#     provider: cloudflare
+# spec:
+#   acme:
+#     email: admin@example.com  # CHANGE THIS
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     privateKeySecretRef:
+#       name: letsencrypt-dns-cloudflare
+#     solvers:
+#     - dns01:
+#         cloudflare:
+#           email: admin@example.com
+#           apiTokenSecretRef:
+#             name: cloudflare-api-token-secret
+#             key: api-token
+#       selector:
+#         dnsNames:
+#         - "*.tas.yourdomain.com"
+#         - "tas.yourdomain.com"
+
+# ---
+# # Route53 DNS01 ClusterIssuer  
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-dns-route53
+#   labels:
+#     app: cert-manager
+#     component: cluster-issuer
+#     provider: route53
+# spec:
+#   acme:
+#     email: admin@example.com  # CHANGE THIS
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     privateKeySecretRef:
+#       name: letsencrypt-dns-route53
+#     solvers:
+#     - dns01:
+#         route53:
+#           region: us-east-1
+#           accessKeyID: AKIAIOSFODNN7EXAMPLE
+#           secretAccessKeySecretRef:
+#             name: route53-secret
+#             key: secret-access-key
+#       selector:
+#         dnsNames:
+#         - "*.tas.yourdomain.com"
+#         - "tas.yourdomain.com"
+
+# ---
+# # Google Cloud DNS ClusterIssuer
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-dns-google
+#   labels:
+#     app: cert-manager
+#     component: cluster-issuer
+#     provider: google
+# spec:
+#   acme:
+#     email: admin@example.com  # CHANGE THIS
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     privateKeySecretRef:
+#       name: letsencrypt-dns-google
+#     solvers:
+#     - dns01:
+#         cloudDNS:
+#           project: your-gcp-project-id
+#           serviceAccountSecretRef:
+#             name: clouddns-dns01-solver-svc-acct
+#             key: key.json
+#       selector:
+#         dnsNames:
+#         - "*.tas.yourdomain.com"
+#         - "tas.yourdomain.com"
+
+# ---
+# # Azure DNS ClusterIssuer
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-dns-azure
+#   labels:
+#     app: cert-manager
+#     component: cluster-issuer
+#     provider: azure
+# spec:
+#   acme:
+#     email: admin@example.com  # CHANGE THIS
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     privateKeySecretRef:
+#       name: letsencrypt-dns-azure
+#     solvers:
+#     - dns01:
+#         azureDNS:
+#           clientID: your-azure-client-id
+#           clientSecretSecretRef:
+#             name: azuredns-config
+#             key: client-secret
+#           subscriptionID: your-azure-subscription-id
+#           tenantID: your-azure-tenant-id
+#           resourceGroupName: your-resource-group
+#           hostedZoneName: yourdomain.com
+#       selector:
+#         dnsNames:
+#         - "*.tas.yourdomain.com"
+#         - "tas.yourdomain.com"

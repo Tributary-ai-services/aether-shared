@@ -1,0 +1,120 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "gnetId": null,
+  "id": null,
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0}]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "minio_cluster_nodes_online_total{job=\"minio-shared\"}", "refId": "A"}],
+      "title": "Online Nodes",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1},
+          "unit": "bytes"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 6, "y": 0},
+      "id": 2,
+      "targets": [
+        {"expr": "minio_cluster_capacity_usable_total_bytes{job=\"minio-shared\"}", "legendFormat": "Total Capacity", "refId": "A"},
+        {"expr": "minio_cluster_capacity_usable_free_bytes{job=\"minio-shared\"}", "legendFormat": "Free Space", "refId": "B"}
+      ],
+      "title": "Storage Capacity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "minio_bucket_usage_object_total{job=\"minio-shared\"}", "legendFormat": "{{bucket}}", "refId": "A"}],
+      "title": "Object Count by Bucket",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "targets": [
+        {"expr": "rate(minio_s3_traffic_received_bytes{job=\"minio-shared\"}[5m])", "legendFormat": "Upload", "refId": "A"},
+        {"expr": "rate(minio_s3_traffic_sent_bytes{job=\"minio-shared\"}[5m])", "legendFormat": "Download", "refId": "B"}
+      ],
+      "title": "Network Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "id": 5,
+      "targets": [
+        {"expr": "rate(minio_s3_requests_total{job=\"minio-shared\"}[5m])", "legendFormat": "{{api}}", "refId": "A"}
+      ],
+      "title": "API Request Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "targets": [
+        {"expr": "rate(minio_s3_requests_errors_total{job=\"minio-shared\"}[5m])", "legendFormat": "{{api}} errors", "refId": "A"}
+      ],
+      "title": "Error Rate",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["minio", "storage", "infrastructure"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "title": "MinIO Infrastructure",
+  "uid": "minio-infrastructure",
+  "version": 1
+}

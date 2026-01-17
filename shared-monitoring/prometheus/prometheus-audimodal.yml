@@ -1,0 +1,41 @@
+# Prometheus configuration for Audimodal
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - "/etc/prometheus/rules/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Audimodal application metrics
+  - job_name: 'audimodal'
+    static_configs:
+      - targets: 
+          - 'audimodal-app:8080'
+          - 'audimodal-app:8081'  # Metrics port
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    
+  # Audimodal database metrics (if using postgres exporter)
+  - job_name: 'audimodal-postgres'
+    static_configs:
+      - targets: ['audimodal-postgres-exporter:9187']
+    
+  # Node exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    
+  # OpenTelemetry collector metrics
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8888']

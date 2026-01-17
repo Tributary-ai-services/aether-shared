@@ -1,0 +1,123 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "gnetId": null,
+  "id": null,
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0}]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "keycloak_active_sessions{job=\"keycloak-shared\"}", "refId": "A"}],
+      "title": "Active Sessions",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1},
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 6, "y": 0},
+      "id": 2,
+      "targets": [
+        {"expr": "rate(keycloak_login_attempts_total{job=\"keycloak-shared\"}[5m])", "legendFormat": "Login Attempts", "refId": "A"},
+        {"expr": "rate(keycloak_login_successes_total{job=\"keycloak-shared\"}[5m])", "legendFormat": "Successful Logins", "refId": "B"},
+        {"expr": "rate(keycloak_login_failures_total{job=\"keycloak-shared\"}[5m])", "legendFormat": "Failed Logins", "refId": "C"}
+      ],
+      "title": "Authentication Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "keycloak_realm_users_total{job=\"keycloak-shared\"}", "legendFormat": "{{realm}}", "refId": "A"}],
+      "title": "User Count by Realm",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "targets": [
+        {"expr": "histogram_quantile(0.95, rate(keycloak_request_duration_seconds_bucket{job=\"keycloak-shared\"}[5m]))", "legendFormat": "95th percentile", "refId": "A"},
+        {"expr": "histogram_quantile(0.50, rate(keycloak_request_duration_seconds_bucket{job=\"keycloak-shared\"}[5m]))", "legendFormat": "50th percentile", "refId": "B"}
+      ],
+      "title": "Response Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "id": 5,
+      "targets": [
+        {"expr": "rate(keycloak_http_requests_total{job=\"keycloak-shared\",status=~\"5..\"}[5m])", "legendFormat": "5xx errors", "refId": "A"},
+        {"expr": "rate(keycloak_http_requests_total{job=\"keycloak-shared\",status=~\"4..\"}[5m])", "legendFormat": "4xx errors", "refId": "B"}
+      ],
+      "title": "Error Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "targets": [
+        {"expr": "keycloak_db_pool_active_connections{job=\"keycloak-shared\"}", "legendFormat": "Active", "refId": "A"},
+        {"expr": "keycloak_db_pool_idle_connections{job=\"keycloak-shared\"}", "legendFormat": "Idle", "refId": "B"}
+      ],
+      "title": "Database Connection Pool",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["keycloak", "authentication", "infrastructure"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "title": "Keycloak Infrastructure",
+  "uid": "keycloak-infrastructure",
+  "version": 1
+}

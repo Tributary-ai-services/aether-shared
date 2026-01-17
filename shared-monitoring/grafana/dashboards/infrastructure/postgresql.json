@@ -1,0 +1,128 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0}]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false}
+      },
+      "targets": [{"expr": "pg_up{job=\"postgres-shared\"}", "refId": "A"}],
+      "title": "PostgreSQL Status",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "pointSize": 5, "showPoints": "never", "spanNulls": false},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "pg_stat_database_numbackends{job=\"postgres-shared\",datname=\"tas_shared\"}", "legendFormat": "Active Connections", "refId": "A"}],
+      "title": "Active Connections",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1},
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 3,
+      "targets": [
+        {"expr": "rate(pg_stat_database_xact_commit{job=\"postgres-shared\",datname=\"tas_shared\"}[5m])", "legendFormat": "Commits", "refId": "A"},
+        {"expr": "rate(pg_stat_database_xact_rollback{job=\"postgres-shared\",datname=\"tas_shared\"}[5m])", "legendFormat": "Rollbacks", "refId": "B"}
+      ],
+      "title": "Transactions per Second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "bytes"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "targets": [{"expr": "pg_database_size_bytes{job=\"postgres-shared\",datname=\"tas_shared\"}", "legendFormat": "Database Size", "refId": "A"}],
+      "title": "Database Size",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "id": 5,
+      "targets": [
+        {"expr": "rate(pg_stat_database_blks_hit{job=\"postgres-shared\",datname=\"tas_shared\"}[5m]) / (rate(pg_stat_database_blks_hit{job=\"postgres-shared\",datname=\"tas_shared\"}[5m]) + rate(pg_stat_database_blks_read{job=\"postgres-shared\",datname=\"tas_shared\"}[5m]))", "legendFormat": "Cache Hit Ratio", "refId": "A"}
+      ],
+      "title": "Cache Hit Ratio",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "targets": [{"expr": "pg_locks_count{job=\"postgres-shared\"}", "legendFormat": "{{mode}}", "refId": "A"}],
+      "title": "Lock Count",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["postgresql", "database", "infrastructure"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "title": "PostgreSQL Infrastructure",
+  "uid": "postgresql-infrastructure",
+  "version": 1
+}

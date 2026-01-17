@@ -1,0 +1,270 @@
+# Certificate Examples and Templates
+# These examples show different ways to create certificates with cert-manager
+
+# Example 1: Individual certificates for each service (current approach in ingress.yaml)
+# These are automatically created by ingress annotations, but can also be created manually
+
+# Manual certificate for Grafana
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: grafana-tls-cert
+  namespace: tas-shared
+  labels:
+    app: grafana-shared
+    component: certificate
+    service: grafana
+spec:
+  # Secret where the certificate will be stored
+  secretName: grafana-tls
+  # Reference to the issuer
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+    group: cert-manager.io
+  # Domain names for the certificate
+  dnsNames:
+  - grafana.tas.yourdomain.com  # CHANGE THIS
+  # Certificate duration (optional, defaults to 90 days)
+  duration: 2160h # 90 days
+  # When to renew the certificate (optional, defaults to 2/3 of duration)
+  renewBefore: 360h # 15 days before expiry
+  # Subject configuration (optional)
+  subject:
+    organizations:
+    - tas-organization
+  # Private key configuration
+  privateKey:
+    algorithm: RSA
+    encoding: PKCS1
+    size: 2048
+  # Certificate usages
+  usages:
+  - digital signature
+  - key encipherment
+
+---
+# Example 2: Wildcard certificate using DNS01 challenge
+# Uncomment and configure if using DNS challenges
+
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: tas-wildcard-cert
+#   namespace: tas-shared
+#   labels:
+#     app: tas-shared-infrastructure
+#     component: wildcard-certificate
+# spec:
+#   secretName: tas-wildcard-tls
+#   issuerRef:
+#     name: letsencrypt-dns-cloudflare  # Use your DNS issuer
+#     kind: ClusterIssuer
+#     group: cert-manager.io
+#   dnsNames:
+#   - "*.tas.yourdomain.com"  # CHANGE THIS
+#   - "tas.yourdomain.com"    # CHANGE THIS
+#   duration: 2160h # 90 days
+#   renewBefore: 360h # 15 days before expiry
+#   privateKey:
+#     algorithm: RSA
+#     encoding: PKCS1
+#     size: 2048
+
+---
+# Example 3: Certificate with multiple domains
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tas-multi-domain-cert
+  namespace: tas-shared
+  labels:
+    app: tas-shared-infrastructure
+    component: multi-domain-certificate
+spec:
+  secretName: tas-multi-domain-tls
+  issuerRef:
+    name: letsencrypt-staging  # Use staging for testing
+    kind: ClusterIssuer
+    group: cert-manager.io
+  dnsNames:
+  - dashboard.tas.yourdomain.com   # CHANGE THIS
+  - grafana.tas.yourdomain.com     # CHANGE THIS
+  - prometheus.tas.yourdomain.com  # CHANGE THIS
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# Example 4: Self-signed certificate for development
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tas-selfsigned-cert
+  namespace: tas-shared
+  labels:
+    app: tas-shared-infrastructure
+    component: selfsigned-certificate
+    environment: development
+spec:
+  secretName: tas-selfsigned-tls
+  issuerRef:
+    name: selfsigned-issuer
+    kind: Issuer
+    group: cert-manager.io
+  dnsNames:
+  - "*.tas.local"
+  - "tas.local"
+  duration: 8760h # 1 year for dev
+  renewBefore: 720h # 30 days before expiry
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# Self-signed Issuer for development
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-issuer
+  namespace: tas-shared
+  labels:
+    app: cert-manager
+    component: issuer
+    type: selfsigned
+    environment: development
+spec:
+  selfSigned: {}
+
+---
+# Example 5: Certificate with email in subject
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tas-email-cert
+  namespace: tas-shared
+  labels:
+    app: tas-shared-infrastructure
+    component: certificate-with-email
+spec:
+  secretName: tas-email-tls
+  issuerRef:
+    name: letsencrypt-staging
+    kind: ClusterIssuer
+  dnsNames:
+  - api.tas.yourdomain.com  # CHANGE THIS
+  duration: 2160h
+  renewBefore: 360h
+  subject:
+    organizations:
+    - TAS Organization
+    organizationalUnits:
+    - IT Department
+    localities:
+    - San Francisco
+    provinces:
+    - CA
+    countries:
+    - US
+    emailAddresses:
+    - admin@yourdomain.com  # CHANGE THIS
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# Example 6: Certificate with IP SAN (Subject Alternative Name)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tas-ip-san-cert
+  namespace: tas-shared
+  labels:
+    app: tas-shared-infrastructure
+    component: certificate-with-ip
+spec:
+  secretName: tas-ip-san-tls
+  issuerRef:
+    name: selfsigned-issuer  # IP SANs usually only work with self-signed
+    kind: Issuer
+  dnsNames:
+  - internal.tas.local
+  ipAddresses:
+  - 192.168.1.100  # CHANGE THIS TO YOUR CLUSTER IP
+  - 10.0.0.100     # CHANGE THIS TO YOUR INTERNAL IP
+  duration: 8760h
+  renewBefore: 720h
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# Testing Certificate - Use this to test cert-manager functionality
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: test-certificate
+  namespace: tas-shared
+  labels:
+    app: cert-manager
+    component: test-certificate
+    purpose: testing
+spec:
+  secretName: test-certificate-tls
+  issuerRef:
+    name: letsencrypt-staging  # Always use staging for testing
+    kind: ClusterIssuer
+  dnsNames:
+  - test.tas.yourdomain.com  # CHANGE THIS - make sure DNS points to your cluster
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# Secret template for DNS provider credentials
+# Cloudflare API Token Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflare-api-token-secret
+  namespace: cert-manager
+type: Opaque
+stringData:
+  api-token: "your-cloudflare-api-token-here"  # CHANGE THIS
+
+---
+# Route53 Credentials Secret
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: route53-secret
+#   namespace: cert-manager
+# type: Opaque
+# stringData:
+#   secret-access-key: "your-aws-secret-access-key-here"  # CHANGE THIS
+
+---
+# Google Cloud DNS Service Account Secret
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: clouddns-dns01-solver-svc-acct
+#   namespace: cert-manager
+# type: Opaque
+# data:
+#   key.json: "base64-encoded-service-account-json"  # CHANGE THIS
+
+---
+# Azure DNS Configuration Secret
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: azuredns-config
+#   namespace: cert-manager
+# type: Opaque
+# stringData:
+#   client-secret: "your-azure-client-secret"  # CHANGE THIS

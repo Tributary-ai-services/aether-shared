@@ -1,0 +1,172 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper-shared
+  namespace: tas-shared
+  labels:
+    app: zookeeper-shared
+    component: messaging
+spec:
+  serviceName: zookeeper-shared-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper-shared
+  template:
+    metadata:
+      labels:
+        app: zookeeper-shared
+        component: messaging
+    spec:
+      containers:
+      - name: zookeeper
+        image: confluentinc/cp-zookeeper:7.5.0
+        ports:
+        - containerPort: 2181
+          name: client
+        env:
+        - name: ZOOKEEPER_CLIENT_PORT
+          value: "2181"
+        - name: ZOOKEEPER_TICK_TIME
+          value: "2000"
+        - name: KAFKA_OPTS
+          value: "-Dzookeeper.4lw.commands.whitelist=mntr,ruok,stat,srvr"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: zookeeper-data
+          mountPath: /var/lib/zookeeper/data
+        - name: zookeeper-logs
+          mountPath: /var/lib/zookeeper/log
+  volumeClaimTemplates:
+  - metadata:
+      name: zookeeper-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+  - metadata:
+      name: zookeeper-logs
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 5Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-shared
+  namespace: tas-shared
+  labels:
+    app: zookeeper-shared
+spec:
+  type: ClusterIP
+  ports:
+  - port: 2181
+    targetPort: 2181
+    protocol: TCP
+    name: client
+  selector:
+    app: zookeeper-shared
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka-shared
+  namespace: tas-shared
+  labels:
+    app: kafka-shared
+    component: messaging
+spec:
+  serviceName: kafka-shared
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-shared
+  template:
+    metadata:
+      labels:
+        app: kafka-shared
+        component: messaging
+    spec:
+      containers:
+      - name: kafka
+        image: confluentinc/cp-kafka:7.5.0
+        ports:
+        - containerPort: 9092
+          name: kafka
+        env:
+        - name: KAFKA_BROKER_ID
+          value: "1"
+        - name: KAFKA_ZOOKEEPER_CONNECT
+          value: "zookeeper-shared:2181"
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://kafka-shared-0.kafka-shared.tas-shared.svc.cluster.local:9092"
+        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+          value: "PLAINTEXT:PLAINTEXT"
+        - name: KAFKA_INTER_BROKER_LISTENER_NAME
+          value: "PLAINTEXT"
+        - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+          value: "true"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: kafka-data
+          mountPath: /var/lib/kafka/data
+        livenessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+  volumeClaimTemplates:
+  - metadata:
+      name: kafka-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-shared
+  namespace: tas-shared
+  labels:
+    app: kafka-shared
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for StatefulSet
+  ports:
+  - port: 9092
+    targetPort: 9092
+    protocol: TCP
+    name: kafka
+  selector:
+    app: kafka-shared

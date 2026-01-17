@@ -1,0 +1,201 @@
+{
+  "title": "Audimodal Overview",
+  "tags": ["audimodal", "overview"],
+  "timezone": "browser",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Service Status",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "up{job=\"audimodal\"}",
+          "legendFormat": "Audimodal Status",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"text": "DOWN", "color": "red"}}, "type": "value"},
+            {"options": {"1": {"text": "UP", "color": "green"}}, "type": "value"}
+          ],
+          "thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "HTTP Requests to /metrics",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(promhttp_metric_handler_requests_total{job=\"audimodal\"}[5m])",
+          "legendFormat": "{{code}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 6, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 0, "gradientMode": "none"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]},
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "visible", "placement": "bottom"},
+        "tooltip": {"mode": "single", "sort": "none"}
+      }
+    },
+    {
+      "id": 3,
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "go_memstats_alloc_bytes{job=\"audimodal\"}",
+          "legendFormat": "Allocated Memory",
+          "refId": "A"
+        },
+        {
+          "expr": "go_memstats_heap_inuse_bytes{job=\"audimodal\"}",
+          "legendFormat": "Heap In Use",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 0, "gradientMode": "none"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]},
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Garbage Collection",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(go_gc_duration_seconds_count{job=\"audimodal\"}[5m])",
+          "legendFormat": "GC Rate",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 0, "gradientMode": "none"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]},
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Goroutines",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "go_goroutines{job=\"audimodal\"}",
+          "legendFormat": "Active Goroutines",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Heap Objects",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "go_memstats_heap_objects{job=\"audimodal\"}",
+          "legendFormat": "Heap Objects",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 0, "gradientMode": "none"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "GC Pause Duration",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "go_gc_duration_seconds{job=\"audimodal\",quantile=\"0.5\"}",
+          "legendFormat": "50th percentile",
+          "refId": "A"
+        },
+        {
+          "expr": "go_gc_duration_seconds{job=\"audimodal\",quantile=\"0.9\"}",
+          "legendFormat": "90th percentile",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 0, "gradientMode": "none"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]},
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 36,
+  "style": "dark",
+  "time": {"from": "now-15m", "to": "now"},
+  "timepicker": {},
+  "version": 1
+}

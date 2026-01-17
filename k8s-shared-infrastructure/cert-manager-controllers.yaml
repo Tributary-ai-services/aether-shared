@@ -1,0 +1,393 @@
+# cert-manager Controller Deployments
+
+# cert-manager Controller Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+  labels:
+    app: cert-manager
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/instance: cert-manager
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cert-manager
+      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/instance: cert-manager
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        app: cert-manager
+        app.kubernetes.io/name: cert-manager
+        app.kubernetes.io/instance: cert-manager
+        app.kubernetes.io/component: controller
+      annotations:
+        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9402"
+    spec:
+      serviceAccountName: cert-manager
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: cert-manager
+        image: quay.io/jetstack/cert-manager-controller:v1.13.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - --v=2
+        - --cluster-resource-namespace=$(POD_NAMESPACE)
+        - --leader-election-namespace=kube-system
+        - --acme-http01-solver-image=quay.io/jetstack/cert-manager-acmesolver:v1.13.0
+        - --max-concurrent-challenges=60
+        ports:
+        - containerPort: 9402
+          name: http-metrics
+          protocol: TCP
+        - containerPort: 9403
+          name: http-healthz
+          protocol: TCP
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: http-healthz
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 15
+          successThreshold: 1
+          failureThreshold: 8
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http-healthz
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+
+---
+# cert-manager CA Injector Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager-cainjector
+  namespace: cert-manager
+  labels:
+    app: cainjector
+    app.kubernetes.io/name: cainjector
+    app.kubernetes.io/instance: cert-manager
+    app.kubernetes.io/component: cainjector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cainjector
+      app.kubernetes.io/name: cainjector
+      app.kubernetes.io/instance: cert-manager
+      app.kubernetes.io/component: cainjector
+  template:
+    metadata:
+      labels:
+        app: cainjector
+        app.kubernetes.io/name: cainjector
+        app.kubernetes.io/instance: cert-manager
+        app.kubernetes.io/component: cainjector
+    spec:
+      serviceAccountName: cert-manager-cainjector
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: cert-manager-cainjector
+        image: quay.io/jetstack/cert-manager-cainjector:v1.13.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - --v=2
+        - --leader-election-namespace=kube-system
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+
+---
+# cert-manager Webhook Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager-webhook
+  namespace: cert-manager
+  labels:
+    app: webhook
+    app.kubernetes.io/name: webhook
+    app.kubernetes.io/instance: cert-manager
+    app.kubernetes.io/component: webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook
+      app.kubernetes.io/name: webhook
+      app.kubernetes.io/instance: cert-manager
+      app.kubernetes.io/component: webhook
+  template:
+    metadata:
+      labels:
+        app: webhook
+        app.kubernetes.io/name: webhook
+        app.kubernetes.io/instance: cert-manager
+        app.kubernetes.io/component: webhook
+    spec:
+      serviceAccountName: cert-manager-webhook
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: cert-manager-webhook
+        image: quay.io/jetstack/cert-manager-webhook:v1.13.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - --v=2
+        - --secure-port=10250
+        - --dynamic-serving-ca-secret-namespace=$(POD_NAMESPACE)
+        - --dynamic-serving-ca-secret-name=cert-manager-webhook-ca
+        - --dynamic-serving-dns-names=cert-manager-webhook
+        - --dynamic-serving-dns-names=cert-manager-webhook.$(POD_NAMESPACE)
+        - --dynamic-serving-dns-names=cert-manager-webhook.$(POD_NAMESPACE).svc
+        ports:
+        - name: https
+          protocol: TCP
+          containerPort: 10250
+        - name: healthcheck
+          protocol: TCP
+          containerPort: 6080
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: 6080
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 1
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 6080
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 1
+          successThreshold: 1
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+
+---
+# cert-manager Controller Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+  labels:
+    app: cert-manager
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/instance: cert-manager
+    app.kubernetes.io/component: controller
+spec:
+  type: ClusterIP
+  ports:
+  - protocol: TCP
+    port: 9402
+    name: tcp-prometheus-servicemonitor
+    targetPort: 9402
+  selector:
+    app: cert-manager
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/instance: cert-manager
+    app.kubernetes.io/component: controller
+
+---
+# cert-manager Webhook Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: cert-manager-webhook
+  namespace: cert-manager
+  labels:
+    app: webhook
+    app.kubernetes.io/name: webhook
+    app.kubernetes.io/instance: cert-manager
+    app.kubernetes.io/component: webhook
+spec:
+  type: ClusterIP
+  ports:
+  - name: https
+    port: 443
+    protocol: TCP
+    targetPort: https
+  selector:
+    app: webhook
+    app.kubernetes.io/name: webhook
+    app.kubernetes.io/instance: cert-manager
+    app.kubernetes.io/component: webhook
+
+---
+# Validating Admission Webhook
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionWebhook
+metadata:
+  name: cert-manager-webhook
+  labels:
+    app: webhook
+    app.kubernetes.io/name: webhook
+    app.kubernetes.io/instance: cert-manager
+    app.kubernetes.io/component: webhook
+  annotations:
+    cert-manager.io/inject-ca-from: cert-manager/cert-manager-webhook-ca
+webhooks:
+- name: webhook.cert-manager.io
+  rules:
+  - operations:
+    - CREATE
+    - UPDATE
+    apiGroups:
+    - cert-manager.io
+    apiVersions:
+    - v1
+    resources:
+    - certificates
+    - issuers
+    - clusterissuers
+    - certificaterequests
+  - operations:
+    - CREATE
+    - UPDATE
+    apiGroups:
+    - acme.cert-manager.io
+    apiVersions:
+    - v1
+    resources:
+    - challenges
+    - orders
+  admissionReviewVersions:
+  - v1
+  - v1beta1
+  timeoutSeconds: 10
+  failurePolicy: Fail
+  sideEffects: None
+  clientConfig:
+    service:
+      name: cert-manager-webhook
+      namespace: cert-manager
+      path: /validate
+
+---
+# Mutating Admission Webhook
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionWebhook
+metadata:
+  name: cert-manager-webhook
+  labels:
+    app: webhook
+    app.kubernetes.io/name: webhook
+    app.kubernetes.io/instance: cert-manager
+    app.kubernetes.io/component: webhook
+  annotations:
+    cert-manager.io/inject-ca-from: cert-manager/cert-manager-webhook-ca
+webhooks:
+- name: webhook.cert-manager.io
+  rules:
+  - operations:
+    - CREATE
+    - UPDATE
+    apiGroups:
+    - cert-manager.io
+    apiVersions:
+    - v1
+    resources:
+    - certificates
+    - issuers
+    - clusterissuers
+    - certificaterequests
+  - operations:
+    - CREATE
+    - UPDATE
+    apiGroups:
+    - acme.cert-manager.io
+    apiVersions:
+    - v1
+    resources:
+    - challenges
+    - orders
+  admissionReviewVersions:
+  - v1
+  - v1beta1
+  timeoutSeconds: 10
+  failurePolicy: Fail
+  sideEffects: None
+  clientConfig:
+    service:
+      name: cert-manager-webhook
+      namespace: cert-manager
+      path: /mutate

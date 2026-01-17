@@ -1,0 +1,322 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy-dev
+  namespace: tas-dev
+  labels:
+    app: alloy-dev
+    component: logging
+    environment: development
+spec:
+  selector:
+    matchLabels:
+      app: alloy-dev
+  template:
+    metadata:
+      labels:
+        app: alloy-dev
+        component: logging
+        environment: development
+    spec:
+      serviceAccount: alloy-dev-sa
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: alloy
+        image: grafana/alloy:v1.5.0
+        ports:
+        - containerPort: 12345
+          name: http
+        args:
+        - run
+        - --server.http.listen-addr=0.0.0.0:12345
+        - --stability.level=public-preview
+        - /etc/alloy/alloy-config.alloy
+        volumeMounts:
+        - name: alloy-config
+          mountPath: /etc/alloy
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: etcmachine
+          mountPath: /etc/machine-id
+          readOnly: true
+        env:
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: LOKI_ENDPOINT
+          value: "http://loki-dev.tas-dev:3100"
+        - name: PROMETHEUS_ENDPOINT
+          value: "http://prometheus-dev.tas-dev:9090"
+        - name: ENVIRONMENT
+          value: "development"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 12345
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 12345
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: alloy-config
+        configMap:
+          name: alloy-dev-config
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: etcmachine
+        hostPath:
+          path: /etc/machine-id
+          type: File
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy-dev
+  namespace: tas-dev
+  labels:
+    app: alloy-dev
+    component: logging
+spec:
+  type: ClusterIP
+  ports:
+  - port: 12345
+    targetPort: 12345
+    protocol: TCP
+    name: http
+  selector:
+    app: alloy-dev
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy-dev-sa
+  namespace: tas-dev
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy-dev-role
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "services", "endpoints", "pods", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get"]
+- apiGroups: ["extensions", "apps"]
+  resources: ["deployments", "replicasets", "daemonsets"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy-dev-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy-dev-role
+subjects:
+- kind: ServiceAccount
+  name: alloy-dev-sa
+  namespace: tas-dev
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-dev-config
+  namespace: tas-dev
+  labels:
+    app: alloy-dev
+    component: logging
+data:
+  alloy-config.alloy: |
+    // Alloy configuration for Kubernetes development
+    logging {
+      level = "info"
+      format = "logfmt"
+    }
+
+    // Kubernetes API discovery for development
+    discovery.kubernetes "pods" {
+      role = "pod"
+      namespaces {
+        names = ["tas-dev", "default", "kube-system"]
+      }
+    }
+
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
+
+    // Relabel pods for development logging
+    discovery.relabel "kubernetes_pods" {
+      targets = discovery.kubernetes.pods.targets
+
+      // Keep running pods
+      rule {
+        source_labels = ["__meta_kubernetes_pod_phase"]
+        regex = "Running"
+        action = "keep"
+      }
+
+      // Skip system pods unless specifically needed
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        regex = "kube-.*"
+        action = "drop"
+      }
+
+      // Set job label from service name or pod name
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label = "job"
+        regex = "(.+)"
+        replacement = "${1}"
+      }
+
+      // Fallback to pod name
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label = "job"
+        regex = "(.+)"
+        replacement = "${1}"
+      }
+
+      // Set instance label
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label = "instance"
+      }
+
+      // Set namespace label
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label = "namespace"
+      }
+
+      // Set node name
+      rule {
+        source_labels = ["__meta_kubernetes_node_name"]
+        target_label = "node"
+      }
+
+      // Set container name
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label = "container"
+      }
+
+      // Set environment
+      rule {
+        replacement = "development"
+        target_label = "environment"
+      }
+
+      // Set log path for containerd
+      rule {
+        source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+        target_label = "__path__"
+        separator = "/"
+        replacement = "/var/log/pods/*${1}/${2}/*.log"
+      }
+    }
+
+    // Collect logs from Kubernetes pods
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.kubernetes_pods.output
+      forward_to = [loki.process.kubernetes_logs.receiver]
+    }
+
+    // Process Kubernetes logs for development
+    loki.process "kubernetes_logs" {
+      forward_to = [loki.write.loki.receiver]
+
+      // Parse container logs
+      stage.cri {}
+
+      // Extract log level
+      stage.regex {
+        expression = "(?i)(?P<level>debug|info|warn|warning|error|fatal|panic)"
+        source = "content"
+      }
+
+      // Add labels
+      stage.labels {
+        values = {
+          level = "",
+        }
+      }
+
+      // Parse JSON logs from applications
+      stage.match {
+        selector = "{job=~\".*aether.*|.*audimodal.*|.*llm.*\"}"
+        stage.json {
+          expressions = {
+            msg = "msg",
+            component = "component", 
+            request_id = "request_id",
+            trace_id = "trace_id",
+          }
+        }
+        stage.labels {
+          values = {
+            component = "",
+          }
+        }
+      }
+
+      // Drop empty lines
+      stage.match {
+        selector = "{content=\"\"}"
+        action = "drop"
+      }
+    }
+
+    // Send logs to Loki
+    loki.write "loki" {
+      endpoint {
+        url = env("LOKI_ENDPOINT") + "/loki/api/v1/push"
+        
+        // Development retry settings
+        max_backoff_period = "1m"
+        max_backoff_retries = 3
+        min_backoff_period = "100ms"
+      }
+      
+      // External labels for development
+      external_labels = {
+        cluster = "local-k8s-dev",
+        environment = "development",
+      }
+    }

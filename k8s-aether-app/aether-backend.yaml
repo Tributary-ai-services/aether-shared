@@ -1,0 +1,263 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aether-backend-config
+  namespace: aether
+data:
+  PORT: "8080"
+  HOST: "0.0.0.0"
+  GIN_MODE: "debug"
+  NEO4J_URI: "bolt://neo4j:7687"
+  NEO4J_USERNAME: "neo4j"
+  NEO4J_PASSWORD: "password"
+  NEO4J_DATABASE: "neo4j"
+  REDIS_ADDR: "tas-redis-shared:6379"
+  REDIS_PASSWORD: ""
+  REDIS_DB: "0"
+  KEYCLOAK_URL: "http://tas-keycloak-shared:8080"
+  KEYCLOAK_ALLOWED_ISSUERS: "http://tas-keycloak-shared:8080/realms/aether,http://localhost:8081/realms/aether"
+  KEYCLOAK_REALM: "aether"
+  KEYCLOAK_CLIENT_ID: "admin-cli"
+  STORAGE_ENABLED: "true"
+  AWS_REGION: "us-east-1"
+  AWS_ACCESS_KEY_ID: "minioadmin"
+  AWS_SECRET_ACCESS_KEY: "minioadmin123"
+  S3_BUCKET: "aether-storage"
+  S3_ENDPOINT: "http://tas-minio-shared:9000"
+  KAFKA_BROKERS: "tas-kafka-shared:29092"
+  KAFKA_TOPIC_PREFIX: "aether"
+  LOG_LEVEL: "debug"
+  LOG_FORMAT: "json"
+  AUDIMODAL_BASE_URL: "http://audimodal:8080"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aether-backend-secrets
+  namespace: aether
+type: Opaque
+stringData:
+  KEYCLOAK_CLIENT_SECRET: "e78dEfml7xy6YKyHyiQWMMmw7fDs6Kz8"
+  JWT_SECRET_KEY: "your-secret-key"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aether-backend
+  namespace: aether
+  labels:
+    app: aether-backend
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aether-backend
+  template:
+    metadata:
+      labels:
+        app: aether-backend
+        component: backend
+    spec:
+      containers:
+      - name: aether-backend
+        image: aether-be_aether-backend:latest
+        imagePullPolicy: Never  # For local development with locally built images
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        # Load config from ConfigMap
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: PORT
+        - name: HOST
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: HOST
+        - name: GIN_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: GIN_MODE
+        - name: NEO4J_URI
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: NEO4J_URI
+        - name: NEO4J_USERNAME
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: NEO4J_USERNAME
+        - name: NEO4J_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: NEO4J_PASSWORD
+        - name: NEO4J_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: NEO4J_DATABASE
+        - name: REDIS_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: REDIS_ADDR
+        - name: REDIS_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: REDIS_PASSWORD
+        - name: REDIS_DB
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: REDIS_DB
+        - name: KEYCLOAK_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: KEYCLOAK_URL
+        - name: KEYCLOAK_ALLOWED_ISSUERS
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: KEYCLOAK_ALLOWED_ISSUERS
+        - name: KEYCLOAK_REALM
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: KEYCLOAK_REALM
+        - name: KEYCLOAK_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: KEYCLOAK_CLIENT_ID
+        - name: STORAGE_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: STORAGE_ENABLED
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: AWS_REGION
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: AWS_SECRET_ACCESS_KEY
+        - name: S3_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: S3_BUCKET
+        - name: S3_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: S3_ENDPOINT
+        - name: KAFKA_BROKERS
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: KAFKA_BROKERS
+        - name: KAFKA_TOPIC_PREFIX
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: KAFKA_TOPIC_PREFIX
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: LOG_LEVEL
+        - name: LOG_FORMAT
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: LOG_FORMAT
+        - name: AUDIMODAL_BASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aether-backend-config
+              key: AUDIMODAL_BASE_URL
+        # Load secrets from Secret
+        - name: KEYCLOAK_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: aether-backend-secrets
+              key: KEYCLOAK_CLIENT_SECRET
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aether-backend-secrets
+              key: JWT_SECRET_KEY
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aether-backend
+  namespace: aether
+  labels:
+    app: aether-backend
+    component: backend
+spec:
+  selector:
+    app: aether-backend
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
+---
+# Optional: NodePort service for local development access
+apiVersion: v1
+kind: Service
+metadata:
+  name: aether-backend-nodeport
+  namespace: aether
+  labels:
+    app: aether-backend
+    component: backend
+spec:
+  selector:
+    app: aether-backend
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    nodePort: 30080
+    protocol: TCP
+  type: NodePort

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-shared-config
+  namespace: tas-shared
+  labels:
+    app: keycloak
+    component: shared-config
+data:
+  # Keycloak Realm Configuration
+  KEYCLOAK_REALM: "aether"
+
+  # Keycloak Service URLs
+  KEYCLOAK_URL: "http://keycloak-shared.tas-shared:8080"
+  KEYCLOAK_PUBLIC_URL: "https://keycloak.tas.scharber.com"
+
+  # Client IDs
+  KEYCLOAK_FRONTEND_CLIENT_ID: "aether-frontend"
+  KEYCLOAK_BACKEND_CLIENT_ID: "aether-backend"
+
+  # Allowed Issuers (for multi-environment support)
+  KEYCLOAK_ALLOWED_ISSUERS: "http://keycloak-shared.tas-shared:8080/realms/aether,https://keycloak.tas.scharber.com/realms/aether"

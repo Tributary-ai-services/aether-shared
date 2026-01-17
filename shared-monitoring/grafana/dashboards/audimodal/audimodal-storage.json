@@ -1,0 +1,328 @@
+{
+  "title": "Audimodal Memory & Storage Metrics",
+  "tags": ["audimodal", "storage", "memory"],
+  "timezone": "browser",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Heap Memory Overview",
+      "type": "piechart",
+      "targets": [
+        {
+          "expr": "go_memstats_heap_alloc_bytes{job=\"audimodal\"}",
+          "legendFormat": "Allocated",
+          "refId": "A"
+        },
+        {
+          "expr": "go_memstats_heap_idle_bytes{job=\"audimodal\"}",
+          "legendFormat": "Idle",
+          "refId": "B"
+        },
+        {
+          "expr": "go_memstats_heap_inuse_bytes{job=\"audimodal\"}",
+          "legendFormat": "In Use",
+          "refId": "C"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]},
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "pieType": "pie",
+        "tooltip": {"mode": "single", "sort": "none"},
+        "legend": {"displayMode": "visible", "placement": "right"}
+      }
+    },
+    {
+      "id": 2,
+      "title": "Memory Usage Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "go_memstats_alloc_bytes{job=\"audimodal\"}",
+          "legendFormat": "Currently Allocated",
+          "refId": "A"
+        },
+        {
+          "expr": "go_memstats_heap_sys_bytes{job=\"audimodal\"}",
+          "legendFormat": "Heap System",
+          "refId": "B"
+        },
+        {
+          "expr": "go_memstats_sys_bytes{job=\"audimodal\"}",
+          "legendFormat": "Total System",
+          "refId": "C"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]},
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "visible", "placement": "bottom"},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      }
+    },
+    {
+      "id": 3,
+      "title": "Heap Allocation Rate",
+      "type": "timeseries", 
+      "targets": [
+        {
+          "expr": "rate(go_memstats_alloc_bytes_total{job=\"audimodal\"}[5m])",
+          "legendFormat": "Allocation Rate",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(go_memstats_mallocs_total{job=\"audimodal\"}[5m])",
+          "legendFormat": "Malloc Rate",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(go_memstats_frees_total{job=\"audimodal\"}[5m])",
+          "legendFormat": "Free Rate",
+          "refId": "C"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 0, "gradientMode": "none"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]},
+          "unit": "binBps"
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "Malloc|Free"},
+            "properties": [{"id": "unit", "value": "ops"}]
+          }
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "title": "Memory Statistics",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "go_memstats_heap_objects{job=\"audimodal\"}",
+          "legendFormat": "Heap Objects",
+          "refId": "A"
+        },
+        {
+          "expr": "go_memstats_stack_inuse_bytes{job=\"audimodal\"}",
+          "legendFormat": "Stack In Use",
+          "refId": "B"
+        },
+        {
+          "expr": "go_memstats_next_gc_bytes{job=\"audimodal\"}",
+          "legendFormat": "Next GC Target",
+          "refId": "C"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1000000}, {"color": "red", "value": 10000000}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Heap Objects"},
+            "properties": [{"id": "unit", "value": "short"}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": ".*Bytes|.*Target"},
+            "properties": [{"id": "unit", "value": "bytes"}]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "value",
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Garbage Collection Impact",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "go_gc_heap_allocs_bytes_total{job=\"audimodal\"} - go_gc_heap_frees_bytes_total{job=\"audimodal\"}",
+          "legendFormat": "Net Heap Bytes",
+          "refId": "A"
+        },
+        {
+          "expr": "go_gc_heap_live_bytes{job=\"audimodal\"}",
+          "legendFormat": "Live Heap Bytes",
+          "refId": "B"
+        },
+        {
+          "expr": "go_gc_heap_goal_bytes{job=\"audimodal\"}",
+          "legendFormat": "GC Goal",
+          "refId": "C"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 0, "gradientMode": "none"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]},
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Memory System Breakdown",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "go_memstats_gc_sys_bytes{job=\"audimodal\"}",
+          "legendFormat": "GC System",
+          "refId": "A"
+        },
+        {
+          "expr": "go_memstats_mcache_sys_bytes{job=\"audimodal\"}",
+          "legendFormat": "MCache System",
+          "refId": "B"
+        },
+        {
+          "expr": "go_memstats_mspan_sys_bytes{job=\"audimodal\"}",
+          "legendFormat": "MSpan System",
+          "refId": "C"
+        },
+        {
+          "expr": "go_memstats_other_sys_bytes{job=\"audimodal\"}",
+          "legendFormat": "Other System",
+          "refId": "D"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 0, "gradientMode": "none"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}]},
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Allocation Size Distribution",
+      "type": "heatmap",
+      "targets": [
+        {
+          "expr": "increase(go_gc_heap_allocs_by_size_bytes_bucket{job=\"audimodal\"}[5m])",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {"legend": false, "tooltip": false, "vis": false}
+          }
+        }
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 2,
+        "cellValues": {},
+        "color": {"exponent": 0.5, "fill": "dark-orange", "scale": "exponential", "scheme": "Oranges"},
+        "exemplars": {"color": "rgba(255,0,255,0.7)"},
+        "filterValues": {"le": 1e-9},
+        "legend": {"show": true},
+        "rowsFrame": {"layout": "auto"},
+        "tooltip": {"show": true, "yHistogram": false},
+        "yAxis": {"axisPlacement": "left", "reverse": false}
+      }
+    },
+    {
+      "id": 8,
+      "title": "Memory Efficiency Metrics",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "go_memstats_alloc_bytes{job=\"audimodal\"} / go_memstats_heap_sys_bytes{job=\"audimodal\"}",
+          "legendFormat": "Heap Utilization",
+          "refId": "A"
+        },
+        {
+          "expr": "go_memstats_heap_released_bytes{job=\"audimodal\"}",
+          "legendFormat": "Released to OS",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(go_memstats_last_gc_time_seconds{job=\"audimodal\"}[5m]) * 60",
+          "legendFormat": "GC Frequency (per min)",
+          "refId": "C"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.8}, {"color": "red", "value": 0.95}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Heap Utilization"},
+            "properties": [{"id": "unit", "value": "percentunit"}, {"id": "max", "value": 1}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Released to OS"},
+            "properties": [{"id": "unit", "value": "bytes"}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "GC Frequency (per min)"},
+            "properties": [{"id": "unit", "value": "short"}]
+          }
+        ]
+      }
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 36,
+  "style": "dark",
+  "time": {"from": "now-30m", "to": "now"},
+  "timepicker": {},
+  "version": 1
+}

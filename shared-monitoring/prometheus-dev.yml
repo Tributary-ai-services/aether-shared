@@ -1,0 +1,155 @@
+# Prometheus configuration for local development
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'local-development'
+    environment: 'dev'
+
+# Development-specific alerting (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager-shared:9093
+
+# Development rule files (optional)
+# rule_files:
+#   - "alerts/*.yml"
+
+scrape_configs:
+  # Self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+
+  # Shared infrastructure services
+  - job_name: 'redis-shared'
+    static_configs:
+      - targets: ['redis-shared:6379']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  - job_name: 'postgres-shared'
+    static_configs:
+      - targets: ['postgres-shared:5432']
+    scrape_interval: 30s
+
+  - job_name: 'minio-shared'
+    metrics_path: '/minio/v2/metrics/cluster'
+    static_configs:
+      - targets: ['minio-shared:9000']
+    scrape_interval: 30s
+
+  - job_name: 'grafana-shared'
+    static_configs:
+      - targets: ['grafana-shared:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  - job_name: 'loki-shared'
+    static_configs:
+      - targets: ['loki-shared:3100']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  - job_name: 'alloy-shared'
+    static_configs:
+      - targets: ['alloy-shared:12345']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Kafka monitoring
+  - job_name: 'kafka-shared'
+    static_configs:
+      - targets: ['kafka-shared:9092']
+    scrape_interval: 30s
+
+  # Keycloak monitoring
+  - job_name: 'keycloak-shared'
+    static_configs:
+      - targets: ['keycloak-shared:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Microservices - auto-discovery based on Docker labels
+  - job_name: 'docker-containers'
+    dockerswarm_sd_configs:
+      - host: unix:///var/run/docker.sock
+        role: containers
+        port: 8080
+    relabel_configs:
+      # Only scrape containers with prometheus.scrape=true label
+      - source_labels: [__meta_dockerswarm_container_label_prometheus_scrape]
+        action: keep
+        regex: true
+      
+      # Use custom metrics path if defined
+      - source_labels: [__meta_dockerswarm_container_label_prometheus_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      
+      # Use custom port if defined
+      - source_labels: [__meta_dockerswarm_container_label_prometheus_port]
+        action: replace
+        target_label: __address__
+        regex: (.+)
+        replacement: ${1}
+
+  # Static configurations for known microservices
+  - job_name: 'aether-backend'
+    static_configs:
+      - targets: ['aether-be_aether-backend_1:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  - job_name: 'aether-frontend'
+    static_configs:
+      - targets: ['aether_aether-frontend_1:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  - job_name: 'audimodal'
+    static_configs:
+      - targets: ['audimodal-app:8084']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  - job_name: 'llm-router'
+    static_configs:
+      - targets: ['llm-router-aether-app:8086']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  - job_name: 'neo4j'
+    static_configs:
+      - targets: ['aether-be_neo4j_1:2004']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Node exporter for host metrics (if available)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['host.docker.internal:9100']
+    scrape_interval: 60s
+
+  # cAdvisor for container metrics (if available)  
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+# Remote write for development (optional - for testing)
+# remote_write:
+#   - url: "http://localhost:9090/api/v1/write"
+#     write_relabel_configs:
+#       - source_labels: [__name__]
+#         regex: "development_.*"
+#         action: keep
