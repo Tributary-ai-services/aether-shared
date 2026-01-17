@@ -100,6 +100,26 @@ spec:
 
 ---
 apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-shared-nodeport
+  namespace: tas-shared
+  labels:
+    app: postgres-shared
+    component: database
+spec:
+  type: NodePort
+  ports:
+  - port: 5432
+    targetPort: 5432
+    nodePort: 30432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgres-shared
+
+---
+apiVersion: v1
 kind: Secret
 metadata:
   name: postgres-shared-secret

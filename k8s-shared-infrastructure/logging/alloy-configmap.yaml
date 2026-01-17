@@ -1,0 +1,155 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-shared-config
+  namespace: tas-shared
+  labels:
+    app: alloy-shared
+    component: logging
+data:
+  alloy-config.alloy: |
+    // Alloy configuration for TAS Kubernetes multi-namespace log collection
+    logging {
+      level = "info"  // Changed from debug to reduce noise in production
+      format = "logfmt"
+    }
+
+    // Kubernetes API discovery
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
+
+    // Relabel Kubernetes pods for log collection - MULTI-NAMESPACE SUPPORT
+    discovery.relabel "kubernetes_pods" {
+      targets = discovery.kubernetes.pods.targets
+
+      // Keep pods from multiple TAS namespaces
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod)"
+        action = "keep"
+      }
+
+      // Only keep running pods
+      rule {
+        source_labels = ["__meta_kubernetes_pod_phase"]
+        regex = "Running"
+        action = "keep"
+      }
+
+      // Set job label from pod name (handles both -shared and non-shared pods)
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label = "job"
+        regex = "(.+?)(?:-shared)?-[a-z0-9]+-[a-z0-9]+.*"
+        replacement = "${1}"
+      }
+
+      // Set instance label
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label = "instance"
+      }
+
+      // Set namespace label
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label = "namespace"
+      }
+
+      // Set node name
+      rule {
+        source_labels = ["__meta_kubernetes_node_name"]
+        target_label = "node"
+      }
+
+      // Set container name
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label = "container"
+      }
+
+      // Add service label for better organization
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label = "service"
+      }
+
+      // Set log path for containerd
+      rule {
+        source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+        target_label = "__path__"
+        separator = "/"
+        replacement = "/var/log/pods/*${1}/${2}/*.log"
+      }
+    }
+
+    // Collect logs from Kubernetes pods
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.kubernetes_pods.output
+      forward_to = [loki.process.kubernetes_logs.receiver]
+    }
+
+    // Process Kubernetes logs - Enhanced for structured logging
+    loki.process "kubernetes_logs" {
+      forward_to = [loki.write.loki.receiver]
+
+      // Parse container logs in CRI format (non-blocking)
+      stage.cri {}
+
+      // Extract log level from JSON structured logs (Go services: audimodal, aether-be)
+      stage.json {
+        expressions = {
+          level = "level",
+          service = "service",
+          trace_id = "trace_id",
+          request_id = "request_id",
+          tenant_id = "tenant_id",
+          user_id = "user_id",
+        }
+      }
+
+      // Extract log level from Python structlog (deeplake-api)
+      stage.json {
+        expressions = {
+          event = "event",
+          logger_name = "logger",
+        }
+      }
+
+      // Fallback: Extract log level from unstructured logs (optional, won't drop if not found)
+      stage.regex {
+        expression = "(?i)(?P<detected_level>debug|info|warn|warning|error|fatal|panic)"
+      }
+
+      // Add extracted fields as labels
+      stage.labels {
+        values = {
+          level = "",
+          detected_level = "",
+          service = "",
+        }
+      }
+    }
+
+    // Send logs to Loki
+    loki.write "loki" {
+      endpoint {
+        url = env("LOKI_ENDPOINT") + "/loki/api/v1/push"
+
+        // Retry configuration
+        max_backoff_period = "5m"
+        max_backoff_retries = 10
+        min_backoff_period = "500ms"
+      }
+
+      // External labels
+      external_labels = {
+        cluster = "tas-k8s",
+        environment = "development",
+      }
+    }

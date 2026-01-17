@@ -1,0 +1,333 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-tas-applications
+  namespace: tas-shared
+  labels:
+    grafana_dashboard: "1"
+data:
+  tas-applications-logs.json: |-
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "datasource": "Loki",
+          "description": "Overview of log volume across TAS application services",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "vis": false
+                }
+              },
+              "mappings": []
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "pieType": "pie",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": "Loki",
+              "editorMode": "code",
+              "expr": "sum by (container) (count_over_time({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"}[$__auto]))",
+              "queryType": "",
+              "refId": "A",
+              "legendFormat": "{{container}}"
+            }
+          ],
+          "title": "Log Volume by Application",
+          "type": "piechart"
+        },
+        {
+          "datasource": "Loki",
+          "description": "Log levels distribution across application services",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "id": 2,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": "Loki",
+              "editorMode": "code",
+              "expr": "sum by (level) (count_over_time({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"} | json | level != \"\" [$__auto]))",
+              "queryType": "",
+              "refId": "A"
+            }
+          ],
+          "title": "Log Levels Distribution",
+          "type": "table"
+        },
+        {
+          "datasource": "Loki",
+          "description": "Recent log entries from TAS application services (aether-backend, audimodal, deeplake-api, llm-router, agent-builder). Use the service dropdown above to filter by specific applications.",
+          "gridPos": {
+            "h": 12,
+            "w": 24,
+            "x": 0,
+            "y": 8
+          },
+          "id": 3,
+          "options": {
+            "dedupStrategy": "none",
+            "enableLogDetails": true,
+            "prettifyLogMessage": false,
+            "showCommonLabels": false,
+            "showLabels": false,
+            "showTime": false,
+            "sortOrder": "Descending",
+            "wrapLogMessage": false
+          },
+          "targets": [
+            {
+              "datasource": "Loki",
+              "editorMode": "code",
+              "expr": "{namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\", container=~\"$service\"} | json | level=~\"$level\" |= \"$search\"",
+              "queryType": "",
+              "refId": "A"
+            }
+          ],
+          "title": "TAS Application Logs",
+          "type": "logs"
+        },
+        {
+          "datasource": "Loki",
+          "description": "Error and critical logs across all application services",
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 20
+          },
+          "id": 4,
+          "options": {
+            "dedupStrategy": "none",
+            "enableLogDetails": true,
+            "prettifyLogMessage": false,
+            "showCommonLabels": false,
+            "showLabels": false,
+            "showTime": false,
+            "sortOrder": "Descending",
+            "wrapLogMessage": false
+          },
+          "targets": [
+            {
+              "datasource": "Loki",
+              "editorMode": "code",
+              "expr": "{namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"} |~ \"(?i)(error|ERROR|fatal|exception|failed|panic)\"",
+              "queryType": "",
+              "refId": "A"
+            }
+          ],
+          "title": "Application Error Logs",
+          "type": "logs"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "style": "dark",
+      "tags": [
+        "loki",
+        "logs",
+        "tas",
+        "applications"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {
+              "selected": true,
+              "text": [
+                "All"
+              ],
+              "value": [
+                "$__all"
+              ]
+            },
+            "datasource": "Loki",
+            "definition": "label_values({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"}, container)",
+            "hide": 0,
+            "includeAll": true,
+            "multi": true,
+            "name": "service",
+            "options": [],
+            "query": "label_values({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"}, container)",
+            "refresh": 2,
+            "regex": "",
+            "skipUrlSync": false,
+            "sort": 1,
+            "type": "query"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": [
+                "All"
+              ],
+              "value": [
+                ".*"
+              ]
+            },
+            "hide": 0,
+            "includeAll": true,
+            "multi": true,
+            "name": "level",
+            "options": [
+              {
+                "selected": true,
+                "text": "All",
+                "value": ".*"
+              },
+              {
+                "selected": false,
+                "text": "DEBUG",
+                "value": "DEBUG|debug"
+              },
+              {
+                "selected": false,
+                "text": "INFO",
+                "value": "INFO|info"
+              },
+              {
+                "selected": false,
+                "text": "WARN",
+                "value": "WARN|warn|WARNING|warning"
+              },
+              {
+                "selected": false,
+                "text": "ERROR",
+                "value": "ERROR|error"
+              }
+            ],
+            "query": "DEBUG : DEBUG|debug, INFO : INFO|info, WARN : WARN|warn|WARNING|warning, ERROR : ERROR|error",
+            "skipUrlSync": false,
+            "type": "custom"
+          },
+          {
+            "current": {
+              "selected": false,
+              "text": "",
+              "value": ""
+            },
+            "hide": 0,
+            "label": "Search",
+            "name": "search",
+            "options": [
+              {
+                "selected": true,
+                "text": "",
+                "value": ""
+              }
+            ],
+            "query": "",
+            "skipUrlSync": false,
+            "type": "textbox"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "TAS Applications Logs",
+      "uid": "tas-applications-logs",
+      "version": 1,
+      "weekStart": ""
+    }
