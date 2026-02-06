@@ -221,6 +221,19 @@ For production deployment using shared infrastructure:
   - Purpose: Local metrics debugging and development
   - Forward metrics to shared Prometheus
 
+#### Napkin AI MCP Server (tas-mcp-servers/servers/napkin-mcp)
+
+- **Napkin MCP Server**: `8087`
+  - Purpose: Visual generation from text using Napkin AI
+  - Features: Generate SVG/PNG/PPT visuals, MinIO storage, MCP federation
+  - Health: `/health`
+
+- **Napkin Operator Metrics**: `8088`
+  - Purpose: Operator Prometheus metrics endpoint
+
+- **Napkin Operator Health**: `8089`
+  - Purpose: Operator liveness/readiness probes (`/healthz`, `/readyz`)
+
 **Shared Infrastructure Usage:**
 - Redis (`6379`): Rate limiting, caching
 - PostgreSQL (`5432`): Request logs, analytics, configuration
@@ -248,6 +261,9 @@ TAS MCP (8082/50052) ──────────────→ Shared Servic
 DeepLake API (8000/50051) ─────────→ Shared Services  
                                               ↓
 LLM Router (8086) ─────────────────→ All Shared Services
+                                              ↓
+Napkin MCP (8087) ─────────────────→ MinIO + TAS MCP Federation
+Napkin Operator (8088/8089) ───────→ MinIO + Napkin API
 ```
 
 ## 🚦 Port Allocation Summary
@@ -258,7 +274,7 @@ LLM Router (8086) ─────────────────→ All Sha
 - **5000-5099**: Databases & Admin Tools (PostgreSQL: 5432-5434, pgAdmin: 5050)
 - **6000-6499**: Cache/Memory (Redis: 6379-6380)
 - **7000-7499**: Graph databases (Neo4j: 7474, 7687)
-- **8000-8199**: Application APIs & Management (8000, 8080-8086, Dashboard: 8090)
+- **8000-8199**: Application APIs & Management (8000, 8080-8089, Dashboard: 8090)
 - **8200-8299**: Security/Vault (Vault: 8200)
 - **9000-9199**: Storage/Monitoring (MinIO: 9000-9001, Prometheus: 9090-9093)
 - **13000+**: Health checks and internal services
