@@ -243,11 +243,11 @@ data:
         - role: endpoints
           namespaces:
             names:
-            - audimodal
+            - aether-be
         relabel_configs:
         - source_labels: [__meta_kubernetes_service_name]
           action: keep
-          regex: audimodal-app
+          regex: audimodal
         - source_labels: [__meta_kubernetes_service_name]
           target_label: service
         - source_labels: [__meta_kubernetes_namespace]
@@ -629,9 +629,6 @@ metadata:
 data:
   datasources.yml: |
     apiVersion: 1
-    deleteDatasources:
-      - name: PostgreSQL-AudiModal
-        orgId: 1
     datasources:
       - name: Prometheus
         type: prometheus
