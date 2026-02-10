@@ -34,3 +34,24 @@ datasources:
     withCredentials: false
     version: 1
     readOnly: false
+
+  - name: PostgreSQL-AudiModal
+    type: postgres
+    uid: pg-audimodal
+    access: proxy
+    url: tas-postgres-shared:5432
+    database: audimodal
+    user: tasuser
+    secureJsonData:
+      password: taspassword
+    jsonData:
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1500
+      timescaledb: false
+    isDefault: false
+    editable: true
+    version: 1
+    readOnly: false

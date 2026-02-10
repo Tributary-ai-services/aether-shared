@@ -629,6 +629,9 @@ metadata:
 data:
   datasources.yml: |
     apiVersion: 1
+    deleteDatasources:
+      - name: PostgreSQL-AudiModal
+        orgId: 1
     datasources:
       - name: Prometheus
         type: prometheus
@@ -645,6 +648,26 @@ data:
         type: alertmanager
         access: proxy
         url: http://alertmanager-shared:9093
+        editable: true
+      - name: PostgreSQL-AudiModal
+        type: postgres
+        uid: pg-audimodal
+        orgId: 1
+        version: 1
+        access: proxy
+        url: postgres-shared:5432
+        database: audimodal
+        user: tasuser
+        secureJsonData:
+          password: taspassword
+        jsonData:
+          sslmode: disable
+          maxOpenConns: 5
+          maxIdleConns: 2
+          connMaxLifetime: 14400
+          postgresVersion: 1500
+          timescaledb: false
+        isDefault: false
         editable: true
   
   dashboards.yml: |
