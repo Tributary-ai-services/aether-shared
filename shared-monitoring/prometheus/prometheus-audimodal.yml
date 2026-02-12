@@ -25,6 +25,22 @@ scrape_configs:
     metrics_path: '/metrics'
     scrape_interval: 10s
     
+  # Audimodal OCR Worker metrics (Kafka pipeline)
+  - job_name: 'audimodal-ocr-worker'
+    static_configs:
+      - targets:
+          - 'audimodal-ocr-worker:8081'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Audimodal Assembler metrics (Kafka pipeline)
+  - job_name: 'audimodal-assembler'
+    static_configs:
+      - targets:
+          - 'audimodal-assembler:8081'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
   # Audimodal database metrics (if using postgres exporter)
   - job_name: 'audimodal-postgres'
     static_configs:

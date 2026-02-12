@@ -2755,4 +2755,341 @@ data:
       "timepicker": {},
       "version": 1
     }
-    
+
+  audimodal-kafka-pipeline.json: |
+    {
+      "title": "AudiModal Kafka Pipeline",
+      "uid": "audimodal-kafka-pipeline",
+      "tags": [
+        "audimodal",
+        "kafka",
+        "pipeline"
+      ],
+      "timezone": "browser",
+      "editable": true,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "id": 1,
+          "title": "Pipeline Jobs by Status",
+          "description": "Current processing jobs grouped by status",
+          "type": "piechart",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-audimodal"
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT status, count(*) AS value FROM processing_jobs GROUP BY status ORDER BY value DESC",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right" },
+            "pieType": "donut",
+            "reduceOptions": { "values": false, "calcs": ["lastNotNull"] }
+          }
+        },
+        {
+          "id": 2,
+          "title": "Active Processing Jobs",
+          "description": "Jobs currently being processed with page progress",
+          "type": "table",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-audimodal"
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT pj.id, f.name AS filename, pj.total_pages, pj.completed_pages, pj.failed_pages, ROUND(100.0 * pj.completed_pages / NULLIF(pj.total_pages, 0), 1) AS progress_pct, pj.status, pj.created_at, EXTRACT(EPOCH FROM (NOW() - pj.created_at))::int AS elapsed_seconds FROM processing_jobs pj JOIN files f ON pj.file_id = f.id WHERE pj.status IN ('splitting', 'processing', 'assembling') ORDER BY pj.created_at DESC LIMIT 20",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "gridPos": { "h": 8, "w": 16, "x": 8, "y": 0 },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "progress_pct" },
+                "properties": [
+                  { "id": "unit", "value": "percent" },
+                  { "id": "max", "value": 100 }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 3,
+          "title": "Page Processing Results",
+          "description": "Distribution of page result statuses across all jobs",
+          "type": "piechart",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-audimodal"
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT status, count(*) AS value FROM pipeline_page_results GROUP BY status ORDER BY value DESC",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right" },
+            "pieType": "donut",
+            "reduceOptions": { "values": false, "calcs": ["lastNotNull"] }
+          }
+        },
+        {
+          "id": 4,
+          "title": "OCR Worker Throughput (Pages/Min)",
+          "description": "Pages processed per minute by OCR workers",
+          "type": "timeseries",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-audimodal"
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT date_trunc('minute', updated_at) AS time, count(*) AS pages_per_min FROM pipeline_page_results WHERE status IN ('completed', 'failed') AND updated_at > NOW() - INTERVAL '1 hour' GROUP BY date_trunc('minute', updated_at) ORDER BY time",
+              "format": "time_series",
+              "refId": "A"
+            }
+          ],
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "gradientMode": "none"
+              },
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "id": 5,
+          "title": "Average OCR Page Duration",
+          "description": "Average time to process a single page via OCR",
+          "type": "timeseries",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-audimodal"
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT date_trunc('minute', updated_at) AS time, AVG(processing_duration_ms) / 1000.0 AS avg_seconds FROM pipeline_page_results WHERE status = 'completed' AND processing_duration_ms > 0 AND updated_at > NOW() - INTERVAL '1 hour' GROUP BY date_trunc('minute', updated_at) ORDER BY time",
+              "format": "time_series",
+              "refId": "A"
+            }
+          ],
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10
+              },
+              "unit": "s"
+            }
+          }
+        },
+        {
+          "id": 6,
+          "title": "Failed Pages by Error Type",
+          "description": "Distribution of page failures by error type",
+          "type": "piechart",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-audimodal"
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT COALESCE(error_type, 'unknown') AS error_type, count(*) AS value FROM pipeline_page_results WHERE status = 'failed' GROUP BY error_type ORDER BY value DESC",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right" },
+            "pieType": "donut",
+            "reduceOptions": { "values": false, "calcs": ["lastNotNull"] }
+          }
+        },
+        {
+          "id": 7,
+          "title": "Recent Completed Jobs",
+          "description": "Recently completed processing jobs with stats",
+          "type": "table",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-audimodal"
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT pj.id, f.name AS filename, pj.total_pages, pj.completed_pages, pj.failed_pages, pj.status, pj.created_at, pj.completed_at, EXTRACT(EPOCH FROM (pj.completed_at - pj.created_at))::int AS duration_seconds FROM processing_jobs pj JOIN files f ON pj.file_id = f.id WHERE pj.status IN ('completed', 'processed_partial', 'failed', 'timed_out') ORDER BY pj.completed_at DESC NULLS LAST LIMIT 20",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "gridPos": { "h": 8, "w": 16, "x": 8, "y": 16 },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "duration_seconds" },
+                "properties": [
+                  { "id": "unit", "value": "s" }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 8,
+          "title": "S3 Chunks Stored per Tenant",
+          "description": "Total chunks stored by S3 bucket (tenant)",
+          "type": "bargauge",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-audimodal"
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT s3_bucket AS bucket, count(*) AS chunks FROM chunks WHERE deleted_at IS NULL GROUP BY s3_bucket ORDER BY chunks DESC LIMIT 10",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1000 },
+                  { "color": "red", "value": 10000 }
+                ]
+              }
+            }
+          },
+          "options": {
+            "orientation": "horizontal",
+            "displayMode": "gradient",
+            "reduceOptions": { "values": true, "calcs": [], "fields": "/^chunks$/" }
+          }
+        },
+        {
+          "id": 9,
+          "title": "Pipeline Summary Stats",
+          "description": "Key pipeline statistics",
+          "type": "stat",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-audimodal"
+          },
+          "targets": [
+            {
+              "rawSql": "SELECT count(*) AS value FROM processing_jobs WHERE status = 'processing'",
+              "format": "table",
+              "refId": "A"
+            },
+            {
+              "rawSql": "SELECT count(*) AS value FROM processing_jobs WHERE status IN ('completed', 'processed_partial')",
+              "format": "table",
+              "refId": "B"
+            },
+            {
+              "rawSql": "SELECT COALESCE(SUM(total_pages), 0) AS value FROM processing_jobs",
+              "format": "table",
+              "refId": "C"
+            },
+            {
+              "rawSql": "SELECT count(*) AS value FROM pipeline_page_results WHERE status = 'failed'",
+              "format": "table",
+              "refId": "D"
+            }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "steps": [
+                  { "color": "green", "value": null }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byFrameRefID", "options": "A" },
+                "properties": [{ "id": "displayName", "value": "Active Jobs" }]
+              },
+              {
+                "matcher": { "id": "byFrameRefID", "options": "B" },
+                "properties": [{ "id": "displayName", "value": "Completed Jobs" }]
+              },
+              {
+                "matcher": { "id": "byFrameRefID", "options": "C" },
+                "properties": [{ "id": "displayName", "value": "Total Pages Queued" }]
+              },
+              {
+                "matcher": { "id": "byFrameRefID", "options": "D" },
+                "properties": [
+                  { "id": "displayName", "value": "Failed Pages" },
+                  { "id": "thresholds", "value": { "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 10 },
+                    { "color": "red", "value": 50 }
+                  ]}}
+                ]
+              }
+            ]
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "orientation": "auto",
+            "reduceOptions": { "values": false, "calcs": ["lastNotNull"] }
+          }
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 36,
+      "style": "dark",
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "version": 1
+    }
