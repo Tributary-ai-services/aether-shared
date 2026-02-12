@@ -13,6 +13,7 @@ resources:
   - minio.yaml
   - keycloak.yaml
   - monitoring.yaml
+  - grafana-dashboards-audimodal.yaml
   - pgadmin.yaml
   - alertmanager.yaml
   - dashboard.yaml

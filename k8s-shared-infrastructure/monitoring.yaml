@@ -243,11 +243,11 @@ data:
         - role: endpoints
           namespaces:
             names:
-            - audimodal
+            - aether-be
         relabel_configs:
         - source_labels: [__meta_kubernetes_service_name]
           action: keep
-          regex: audimodal-app
+          regex: audimodal
         - source_labels: [__meta_kubernetes_service_name]
           target_label: service
         - source_labels: [__meta_kubernetes_namespace]
@@ -645,6 +645,26 @@ data:
         type: alertmanager
         access: proxy
         url: http://alertmanager-shared:9093
+        editable: true
+      - name: PostgreSQL-AudiModal
+        type: postgres
+        uid: pg-audimodal
+        orgId: 1
+        version: 1
+        access: proxy
+        url: postgres-shared:5432
+        database: audimodal
+        user: tasuser
+        secureJsonData:
+          password: taspassword
+        jsonData:
+          sslmode: disable
+          maxOpenConns: 5
+          maxIdleConns: 2
+          connMaxLifetime: 14400
+          postgresVersion: 1500
+          timescaledb: false
+        isDefault: false
         editable: true
   
   dashboards.yml: |
