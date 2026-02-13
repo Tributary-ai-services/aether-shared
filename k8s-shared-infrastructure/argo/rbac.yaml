@@ -1,0 +1,101 @@
+---
+# ServiceAccount for running Argo Workflows
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argo-workflow-runner
+  namespace: argo
+  labels:
+    app: argo-workflows
+    project: tas
+---
+# ClusterRole for Argo Workflow execution
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argo-workflow-runner
+  labels:
+    app: argo-workflows
+    project: tas
+rules:
+- apiGroups: [""]
+  resources: [pods, pods/log]
+  verbs: [get, list, watch, create, delete]
+- apiGroups: [""]
+  resources: [configmaps, secrets]
+  verbs: [get, list]
+- apiGroups: [""]
+  resources: [persistentvolumeclaims]
+  verbs: [get, list, create, delete]
+- apiGroups: [argoproj.io]
+  resources: [workflows, workflowtemplates, cronworkflows]
+  verbs: [get, list, watch, create, update, delete]
+---
+# Bind the ClusterRole to the ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argo-workflow-runner
+  labels:
+    app: argo-workflows
+    project: tas
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argo-workflow-runner
+subjects:
+- kind: ServiceAccount
+  name: argo-workflow-runner
+  namespace: argo
+---
+# ServiceAccount for Argo Events sensors and event sources
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argo-events-sa
+  namespace: argo-events
+  labels:
+    app: argo-events
+    project: tas
+---
+# ClusterRole for Argo Events to submit workflows and manage events
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argo-events-role
+  labels:
+    app: argo-events
+    project: tas
+rules:
+- apiGroups: [""]
+  resources: [pods, services, configmaps, secrets]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [events]
+  verbs: [create, patch]
+- apiGroups: [argoproj.io]
+  resources: [workflows]
+  verbs: [get, list, create, update, delete]
+- apiGroups: [argoproj.io]
+  resources: [eventsources, sensors, eventbus]
+  verbs: [get, list, watch, create, update, delete]
+- apiGroups: [apps]
+  resources: [deployments]
+  verbs: [get, list, watch, create, update, delete]
+---
+# Bind the ClusterRole to the Argo Events ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argo-events-role-binding
+  labels:
+    app: argo-events
+    project: tas
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argo-events-role
+subjects:
+- kind: ServiceAccount
+  name: argo-events-sa
+  namespace: argo-events

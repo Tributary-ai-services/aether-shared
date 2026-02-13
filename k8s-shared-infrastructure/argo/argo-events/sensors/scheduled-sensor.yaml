@@ -1,0 +1,45 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: scheduled-tasks
+  namespace: argo-events
+  labels:
+    app: argo-events
+    project: tas
+    type: scheduled
+spec:
+  dependencies:
+  - name: daily-schedule
+    eventSourceName: calendar
+    eventName: daily
+  triggers:
+  # Daily analytics aggregation workflow
+  - template:
+      name: daily-analytics
+      argoWorkflow:
+        operation: submit
+        source:
+          resource:
+            apiVersion: argoproj.io/v1alpha1
+            kind: Workflow
+            metadata:
+              generateName: daily-analytics-
+              namespace: argo
+            spec:
+              entrypoint: aggregate
+              serviceAccountName: argo-workflow-runner
+              templates:
+              - name: aggregate
+                container:
+                  image: curlimages/curl:8.8.0
+                  command: [sh, -c]
+                  args:
+                  - |
+                    echo "Running daily analytics aggregation"
+                    curl -sf -X POST \
+                      "http://aether-backend.aether-be.svc.cluster.local:8080/api/v1/workflows/analytics/aggregate" \
+                      -H 'Content-Type: application/json' \
+                      -d '{"period":"daily","date":"'$(date -u +%Y-%m-%d)'"}'
+    retryStrategy:
+      steps: 3
+      duration: 30s
