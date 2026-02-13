@@ -61,6 +61,14 @@ route:
       group_wait: 5s
       repeat_interval: 30m
 
+    # Route for workflow alerts
+    - match:
+        service: aether-backend
+      match_re:
+        alertname: Workflow.*
+      receiver: workflow-alerts
+      group_by: ['alertname', 'workflow_id']
+
     # Route for storage alerts
     - match_re:
         alertname: HighStorageUsage|StorageThroughputDegraded
@@ -115,6 +123,12 @@ receivers:
     webhook_configs:
       - url: 'http://127.0.0.1:5001/infrastructure'
         title: 'Infrastructure Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+  - name: 'workflow-alerts'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5001/workflows'
+        title: 'Workflow Alert'
         text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
 
 # Inhibit rules allow to mute a set of alerts given that another alert is firing.

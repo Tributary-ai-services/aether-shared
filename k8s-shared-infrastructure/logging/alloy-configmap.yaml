@@ -30,7 +30,7 @@ data:
       // Keep pods from multiple TAS namespaces
       rule {
         source_labels = ["__meta_kubernetes_namespace"]
-        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod)"
+        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events)"
         action = "keep"
       }
 
