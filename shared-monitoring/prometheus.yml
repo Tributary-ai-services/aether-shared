@@ -69,15 +69,15 @@ scrape_configs:
         target_label: service
         replacement: 'llm-router'
 
+  # Aether Backend (includes workflow metrics)
+  - job_name: 'aether-backend'
+    static_configs:
+      - targets: ['aether-backend:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
   # Add other services when they're actually running and exposing metrics
   # Uncomment these when the services are deployed with metrics endpoints:
-  
-  # # Aether Backend
-  # - job_name: 'aether-backend'
-  #   static_configs:
-  #     - targets: ['aether-backend:8081']
-  #   metrics_path: '/metrics'
-  #   scrape_interval: 30s
 
   # # DeepLake API  
   # - job_name: 'deeplake-service'

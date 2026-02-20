@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: calendar
+  namespace: argo-events
+  labels:
+    app: argo-events
+    project: tas
+    type: calendar
+spec:
+  calendar:
+    # Hourly scheduled workflows
+    hourly:
+      schedule: "0 * * * *"
+      timezone: UTC
+    # Daily scheduled workflows (midnight UTC)
+    daily:
+      schedule: "0 0 * * *"
+      timezone: UTC
+    # Weekly scheduled workflows (Sunday midnight UTC)
+    weekly:
+      schedule: "0 0 * * 0"
+      timezone: UTC

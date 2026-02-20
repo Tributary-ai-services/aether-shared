@@ -1,0 +1,119 @@
+groups:
+  - name: workflow_execution_alerts
+    interval: 30s
+    rules:
+      - alert: WorkflowHighFailureRate
+        expr: >
+          rate(workflow_executions_total{status="failed"}[5m])
+          / rate(workflow_executions_total[5m]) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          service: aether-backend
+        annotations:
+          summary: "High workflow failure rate detected"
+          description: "Workflow failure rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      - alert: WorkflowAllExecutionsFailing
+        expr: >
+          rate(workflow_executions_total{status="failed"}[10m])
+          / rate(workflow_executions_total[10m]) == 1
+        for: 10m
+        labels:
+          severity: critical
+          service: aether-backend
+        annotations:
+          summary: "All workflow executions are failing"
+          description: "100% failure rate for workflow executions over the last 10 minutes"
+
+      - alert: WorkflowExecutionSlow
+        expr: >
+          histogram_quantile(0.95,
+            rate(workflow_execution_duration_seconds_bucket[5m])
+          ) > 600
+        for: 10m
+        labels:
+          severity: warning
+          service: aether-backend
+        annotations:
+          summary: "Workflow executions are slow"
+          description: "95th percentile workflow execution time is {{ $value }}s"
+
+      - alert: WorkflowQueueBacklog
+        expr: workflow_active_executions > 50
+        for: 5m
+        labels:
+          severity: warning
+          service: aether-backend
+        annotations:
+          summary: "High number of active workflow executions"
+          description: "{{ $value }} workflow executions currently active"
+
+  - name: workflow_step_alerts
+    interval: 30s
+    rules:
+      - alert: WorkflowStepConsistentFailure
+        expr: >
+          increase(workflow_step_failures_total[15m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: aether-backend
+        annotations:
+          summary: "Consistent workflow step failures"
+          description: "Step {{ $labels.step_name }} ({{ $labels.step_type }}) has {{ $value }} failures in 15 minutes"
+
+      - alert: WorkflowStepSlow
+        expr: >
+          histogram_quantile(0.95,
+            rate(workflow_step_duration_seconds_bucket[5m])
+          ) > 120
+        for: 10m
+        labels:
+          severity: warning
+          service: aether-backend
+        annotations:
+          summary: "Workflow step is slow"
+          description: "95th percentile step duration for {{ $labels.step_name }} is {{ $value }}s"
+
+  - name: workflow_sync_alerts
+    interval: 30s
+    rules:
+      - alert: WorkflowSyncFailures
+        expr: >
+          rate(workflow_sync_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: aether-backend
+        annotations:
+          summary: "Workflow sync delivery failures"
+          description: "Sync failures for {{ $labels.sync_type }} to {{ $labels.destination }}: {{ $value }}/sec"
+
+  - name: workflow_mcp_alerts
+    interval: 30s
+    rules:
+      - alert: WorkflowMCPServerErrors
+        expr: >
+          rate(workflow_mcp_calls_total{status="error"}[5m])
+          / rate(workflow_mcp_calls_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: aether-backend
+        annotations:
+          summary: "High MCP server error rate in workflows"
+          description: "MCP server {{ $labels.server }} error rate is {{ $value | humanizePercentage }}"
+
+  - name: workflow_cost_alerts
+    interval: 30s
+    rules:
+      - alert: WorkflowHighLLMCost
+        expr: >
+          rate(workflow_llm_cost_usd_total[1h]) * 3600 > 50
+        labels:
+          severity: warning
+          service: aether-backend
+        annotations:
+          summary: "High LLM cost from workflow executions"
+          description: "Workflow LLM cost rate is ${{ $value }}/hour"

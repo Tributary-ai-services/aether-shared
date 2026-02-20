@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: minio
+  namespace: argo-events
+  labels:
+    app: argo-events
+    project: tas
+    type: minio
+spec:
+  minio:
+    # Watch for new file uploads to trigger processing workflows
+    file-upload:
+      bucket:
+        name: uploads
+      endpoint: minio-shared.tas-shared.svc.cluster.local:9000
+      events:
+      - s3:ObjectCreated:*
+      insecure: true
+      accessKey:
+        name: minio-credentials
+        key: accesskey
+      secretKey:
+        name: minio-credentials
+        key: secretkey
+    # Watch for artifact completions
+    artifact-ready:
+      bucket:
+        name: argo-artifacts
+      endpoint: minio-shared.tas-shared.svc.cluster.local:9000
+      events:
+      - s3:ObjectCreated:*
+      insecure: true
+      accessKey:
+        name: minio-credentials
+        key: accesskey
+      secretKey:
+        name: minio-credentials
+        key: secretkey

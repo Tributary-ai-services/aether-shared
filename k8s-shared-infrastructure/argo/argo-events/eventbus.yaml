@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: argo-events
+  labels:
+    app: argo-events
+    project: tas
+spec:
+  # Use NATS streaming as the event transport
+  nats:
+    native:
+      replicas: 3
+      auth: token
+      containerTemplate:
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      metricsContainerTemplate:
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"

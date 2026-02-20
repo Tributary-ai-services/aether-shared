@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: kafka
+  namespace: argo-events
+  labels:
+    app: argo-events
+    project: tas
+    type: kafka
+spec:
+  kafka:
+    # Document processing completion events
+    document-processed:
+      url: kafka-shared.tas-shared.svc.cluster.local:9092
+      topic: processing.complete
+      partition: "0"
+      jsonBody: true
+      consumerGroup:
+        groupName: argo-events-doc-processed
+    # Workflow execution request events
+    workflow-execute:
+      url: kafka-shared.tas-shared.svc.cluster.local:9092
+      topic: workflow.execute
+      partition: "0"
+      jsonBody: true
+      consumerGroup:
+        groupName: argo-events-workflow-exec
+    # User action events
+    user-events:
+      url: kafka-shared.tas-shared.svc.cluster.local:9092
+      topic: user-events
+      partition: "0"
+      jsonBody: true
+      consumerGroup:
+        groupName: argo-events-user
