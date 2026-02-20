@@ -193,6 +193,18 @@ For detailed architecture diagrams, see [cross-service/diagrams/](./cross-servic
 
 **Shared Services**: Keycloak, PostgreSQL, Redis, Neo4j, MinIO, Kafka, Prometheus, Grafana, Loki
 
+#### 12. [Argo Events Reference](./argo-events-reference.md) - Event-Driven Workflow Triggers
+**Technology**: Argo Events v1.9.3 | Argo Workflows v3.6.4
+**CRDs**: EventBus, EventSource, Sensor
+
+Comprehensive reference for Argo Events patterns used in TAS workflow triggers. Covers all EventSource types (Webhook, Calendar, Kafka, MinIO), Sensor configuration, trigger parameterization, conditions, policies, and the mapping from Aether UI trigger types to Argo Events CRDs.
+
+#### 13. [Argo Workflows Reference](./argo-workflows-reference.md) - Workflow Execution Engine
+**Technology**: Argo Workflows v3.6.4
+**CRDs**: Workflow, WorkflowTemplate, ClusterWorkflowTemplate, CronWorkflow
+
+Comprehensive reference for Argo Workflows design patterns. Covers all 8 template types (Container, Script, Resource, HTTP, Suspend, ContainerSet, Steps, DAG), parameters, artifacts, variables, retry strategies, conditionals, loops, exit handlers, CronWorkflows, WorkflowTemplates, and TAS-specific integration patterns (HTTP callback, map-reduce, approval workflows).
+
 ---
 
 ## Cross-Service Integration

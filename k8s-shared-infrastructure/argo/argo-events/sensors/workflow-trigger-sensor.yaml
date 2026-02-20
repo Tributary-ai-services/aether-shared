@@ -75,3 +75,62 @@ spec:
     retryStrategy:
       steps: 3
       duration: 5s
+  # Trigger Argo Workflow from Kafka workflow.execute topic
+  - template:
+      name: trigger-argo-workflow-kafka
+      argoWorkflow:
+        operation: submit
+        source:
+          resource:
+            apiVersion: argoproj.io/v1alpha1
+            kind: Workflow
+            metadata:
+              generateName: tas-workflow-
+              namespace: argo
+            spec:
+              entrypoint: main
+              serviceAccountName: argo-workflow-runner
+              arguments:
+                parameters:
+                - name: workflow-id
+                - name: input-data
+              artifactRepositoryRef:
+                configMap: artifact-repositories
+                key: default-v1
+              templates:
+              - name: main
+                steps:
+                - - name: execute
+                    template: execute-step
+                    arguments:
+                      parameters:
+                      - name: workflow-id
+                        value: "{{workflow.parameters.workflow-id}}"
+                      - name: input-data
+                        value: "{{workflow.parameters.input-data}}"
+              - name: execute-step
+                inputs:
+                  parameters:
+                  - name: workflow-id
+                  - name: input-data
+                container:
+                  image: curlimages/curl:8.8.0
+                  command: [sh, -c]
+                  args:
+                  - |
+                    curl -sf -X POST \
+                      "http://aether-backend.aether-be.svc.cluster.local:8080/api/v1/workflows/{{inputs.parameters.workflow-id}}/execute" \
+                      -H 'Content-Type: application/json' \
+                      -d '{{inputs.parameters.input-data}}'
+        parameters:
+        - src:
+            dependencyName: kafka-workflow-exec
+            dataKey: body.data.workflow_id
+          dest: spec.arguments.parameters.0.value
+        - src:
+            dependencyName: kafka-workflow-exec
+            dataKey: body
+          dest: spec.arguments.parameters.1.value
+    retryStrategy:
+      steps: 3
+      duration: 5s

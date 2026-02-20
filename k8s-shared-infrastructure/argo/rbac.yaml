@@ -28,8 +28,8 @@ rules:
   resources: [persistentvolumeclaims]
   verbs: [get, list, create, delete]
 - apiGroups: [argoproj.io]
-  resources: [workflows, workflowtemplates, cronworkflows]
-  verbs: [get, list, watch, create, update, delete]
+  resources: [workflows, workflowtemplates, cronworkflows, workflowtaskresults]
+  verbs: [get, list, watch, create, update, patch, delete]
 ---
 # Bind the ClusterRole to the ServiceAccount
 apiVersion: rbac.authorization.k8s.io/v1
