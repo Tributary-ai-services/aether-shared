@@ -142,9 +142,11 @@ docker-compose -f docker-compose.shared-infrastructure.yml ps
 
 - **Neo4j Graph Database**:
   - **HTTP**: `7474`
-  - **Bolt**: `7687`
+  - **Bolt**: `7687` (TLS disabled, plain Bolt)
   - Purpose: Knowledge graph and relationship data
-  - Browser: http://localhost:7474
+  - Browser (Docker): http://localhost:7474
+  - Browser (K8s): https://neo4j.tas.scharber.com
+  - Bolt Ingress (K8s): neo4j+s://neo4j-bolt.tas.scharber.com:443
 
 ### AudiModal/eAIIngest Services (audimodal/docker-compose.yml)
 - **eAIIngest Application**: `8084`
