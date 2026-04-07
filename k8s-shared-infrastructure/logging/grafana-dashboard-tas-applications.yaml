@@ -80,7 +80,7 @@ data:
             {
               "datasource": "Loki",
               "editorMode": "code",
-              "expr": "sum by (container) (count_over_time({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"}[$__auto]))",
+              "expr": "sum by (container) (count_over_time({namespace=~\"$namespace\"}[$__auto]))",
               "queryType": "",
               "refId": "A",
               "legendFormat": "{{container}}"
@@ -145,7 +145,7 @@ data:
             {
               "datasource": "Loki",
               "editorMode": "code",
-              "expr": "sum by (level) (count_over_time({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"} | json | level != \"\" [$__auto]))",
+              "expr": "sum by (level) (count_over_time({namespace=~\"$namespace\", level!=\"\"}[$__auto]))",
               "queryType": "",
               "refId": "A"
             }
@@ -177,7 +177,7 @@ data:
             {
               "datasource": "Loki",
               "editorMode": "code",
-              "expr": "{namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\", container=~\"$service\"} | json | level=~\"$level\" |= \"$search\"",
+              "expr": "{namespace=~\"$namespace\", container=~\"$service\"} | json | level=~\"$level\" |= \"$search\"",
               "queryType": "",
               "refId": "A"
             }
@@ -209,7 +209,7 @@ data:
             {
               "datasource": "Loki",
               "editorMode": "code",
-              "expr": "{namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"} |~ \"(?i)(error|ERROR|fatal|exception|failed|panic)\"",
+              "expr": "{namespace=~\"$namespace\"} |~ \"(?i)(error|ERROR|fatal|exception|failed|panic)\"",
               "queryType": "",
               "refId": "A"
             }
@@ -240,13 +240,37 @@ data:
               ]
             },
             "datasource": "Loki",
-            "definition": "label_values({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"}, container)",
+            "definition": "label_values({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|tas-mcp-servers\"}, namespace)",
+            "hide": 0,
+            "includeAll": true,
+            "multi": true,
+            "name": "namespace",
+            "options": [],
+            "query": "label_values({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|tas-mcp-servers\"}, namespace)",
+            "refresh": 2,
+            "regex": "",
+            "skipUrlSync": false,
+            "sort": 1,
+            "type": "query"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": [
+                "All"
+              ],
+              "value": [
+                "$__all"
+              ]
+            },
+            "datasource": "Loki",
+            "definition": "label_values({namespace=~\"$namespace\"}, container)",
             "hide": 0,
             "includeAll": true,
             "multi": true,
             "name": "service",
             "options": [],
-            "query": "label_values({namespace=~\"aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod\"}, container)",
+            "query": "label_values({namespace=~\"$namespace\"}, container)",
             "refresh": 2,
             "regex": "",
             "skipUrlSync": false,
