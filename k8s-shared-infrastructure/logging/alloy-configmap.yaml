@@ -30,7 +30,7 @@ data:
       // Keep pods from multiple TAS namespaces
       rule {
         source_labels = ["__meta_kubernetes_namespace"]
-        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events)"
+        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events|tas-mcp-servers)"
         action = "keep"
       }
 
@@ -105,7 +105,6 @@ data:
       stage.json {
         expressions = {
           level = "level",
-          service = "service",
           trace_id = "trace_id",
           request_id = "request_id",
           tenant_id = "tenant_id",
@@ -131,7 +130,6 @@ data:
         values = {
           level = "",
           detected_level = "",
-          service = "",
         }
       }
     }
