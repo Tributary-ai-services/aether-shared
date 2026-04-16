@@ -1,0 +1,61 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-create-topics
+  namespace: tas-shared
+  labels:
+    app: kafka-shared
+    component: topic-management
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: create-topics
+        image: confluentinc/cp-kafka:7.5.0
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          KAFKA=kafka-shared-0.kafka-shared.tas-shared.svc.cluster.local:9092
+
+          # Activity topics
+          TOPICS="
+            tas.activity.documents
+            tas.activity.llm
+            tas.activity.agents
+            tas.activity.workflows
+            tas.activity.mcp
+            tas.activity.security
+          "
+          # Compliance topics (Gatekeeper)
+          TOPICS="$TOPICS
+            tas.compliance.findings
+            tas.compliance.findings.critical
+            tas.compliance.findings.hipaa
+            tas.compliance.findings.pci
+            tas.compliance.findings.nist
+            tas.compliance.findings.soc2
+            tas.compliance.findings.eu_ai
+            tas.compliance.findings.iso27001
+            tas.compliance.actions
+            tas.compliance.audit
+          "
+
+          for TOPIC in $TOPICS; do
+            echo "Creating topic: $TOPIC"
+            kafka-topics --bootstrap-server "$KAFKA" \
+              --create \
+              --if-not-exists \
+              --topic "$TOPIC" \
+              --partitions 6 \
+              --replication-factor 1 \
+              --config cleanup.policy=delete \
+              --config retention.ms=604800000
+          done
+
+          echo "Listing all topics:"
+          kafka-topics --bootstrap-server "$KAFKA" --list
+          echo "Topic creation complete."
