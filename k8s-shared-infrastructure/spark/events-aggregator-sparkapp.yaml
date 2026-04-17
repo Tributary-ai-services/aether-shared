@@ -1,0 +1,104 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: events-aggregator
+  namespace: tas-shared
+  labels:
+    app: events-aggregator
+    component: streaming
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: registry-api.tas.scharber.com/tas-spark-jobs:latest
+  imagePullPolicy: Always
+  mainApplicationFile: local:///opt/spark/jobs/events_aggregator/main.py
+  sparkVersion: "3.5.0"
+  restartPolicy:
+    type: Always
+    onFailureRetries: 3
+    onFailureRetryInterval: 60
+    onSubmissionFailureRetries: 3
+    onSubmissionFailureRetryInterval: 30
+  driver:
+    cores: 1
+    memory: "1g"
+    serviceAccount: spark-events-aggregator
+    labels:
+      app: events-aggregator
+      role: driver
+    env:
+    - name: KAFKA_BOOTSTRAP
+      value: "kafka-shared-0.kafka-shared.tas-shared.svc.cluster.local:9092"
+    - name: JDBC_URL
+      value: "jdbc:postgresql://timescaledb-shared.tas-shared.svc.cluster.local:5432/tas_events"
+    - name: JDBC_USER
+      valueFrom:
+        secretKeyRef:
+          name: timescaledb-shared-secret
+          key: username
+    - name: JDBC_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: timescaledb-shared-secret
+          key: password
+    - name: CHECKPOINT_LOCATION
+      value: "s3a://spark-checkpoints/events-aggregator/"
+    - name: MINIO_ENDPOINT
+      value: "http://minio-shared.tas-shared.svc.cluster.local:9000"
+    - name: MINIO_ACCESS_KEY
+      value: "minioadmin"
+    - name: MINIO_SECRET_KEY
+      value: "minioadmin123"
+  executor:
+    cores: 1
+    instances: 1
+    memory: "1g"
+    labels:
+      app: events-aggregator
+      role: executor
+  deps:
+    jars:
+    - "https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.0/spark-sql-kafka-0-10_2.12-3.5.0.jar"
+    - "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.1/postgresql-42.7.1.jar"
+    - "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar"
+    - "https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar"
+    - "https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.5.0/kafka-clients-3.5.0.jar"
+    - "https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/3.5.0/spark-token-provider-kafka-0-10_2.12-3.5.0.jar"
+    - "https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar"
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark-events-aggregator
+  namespace: tas-shared
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spark-events-aggregator
+  namespace: tas-shared
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spark-events-aggregator
+  namespace: tas-shared
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: spark-events-aggregator
+subjects:
+- kind: ServiceAccount
+  name: spark-events-aggregator
+  namespace: tas-shared
