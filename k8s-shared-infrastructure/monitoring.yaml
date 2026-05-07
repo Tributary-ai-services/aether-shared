@@ -531,6 +531,8 @@ spec:
           mountPath: /var/lib/grafana/dashboards/infrastructure
         - name: dashboards-tas-applications
           mountPath: /var/lib/grafana/dashboards/tas-applications
+        - name: dashboards-events-pipeline
+          mountPath: /var/lib/grafana/dashboards/events-pipeline
         livenessProbe:
           httpGet:
             path: /api/health
@@ -574,6 +576,9 @@ spec:
       - name: dashboards-tas-applications
         configMap:
           name: grafana-dashboards-tas-applications
+      - name: dashboards-events-pipeline
+        configMap:
+          name: grafana-dashboards-events-pipeline
 
 ---
 apiVersion: v1
@@ -666,7 +671,27 @@ data:
           timescaledb: false
         isDefault: false
         editable: true
-  
+      - name: TimescaleDB-Events
+        type: postgres
+        uid: pg-tas-events
+        orgId: 1
+        version: 1
+        access: proxy
+        url: timescaledb-shared.tas-shared.svc.cluster.local:5432
+        database: tas_events
+        user: tas_events_rw
+        secureJsonData:
+          password: taseventspass
+        jsonData:
+          sslmode: disable
+          maxOpenConns: 5
+          maxIdleConns: 2
+          connMaxLifetime: 14400
+          postgresVersion: 1500
+          timescaledb: true
+        isDefault: false
+        editable: true
+
   dashboards.yml: |
     apiVersion: 1
     providers:
