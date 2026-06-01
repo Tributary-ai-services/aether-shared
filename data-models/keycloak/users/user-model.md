@@ -749,7 +749,17 @@ LIMIT 50;
 - [Keycloak Groups](../groups/group-model.md) - Group-based permissions
 - [Authentication Middleware](../../aether-be/middleware/auth.md) - JWT verification
 - [User Onboarding Flow](../../cross-service/flows/user-onboarding.md) - Complete onboarding process
+- [AIQG Account Model](../../aiqg/account.md) - Maps a Space's owning User to an AIQG account at provisioning time
 - [Security Best Practices](../../overview/security-guidelines.md) - Platform security
+
+### AIQG (AI Quality Gateway) Cross-Service Note
+
+This model is unchanged by the AIQG product. The Keycloak `User` and the `aether` realm continue to serve as the canonical identity layer for AIQG dashboard access. Two annotative facts worth recording:
+
+1. **Optional custom attribute `aiqg_account_id`** (string) — Keycloak custom attributes are name-keyed; an optional attribute is additive and breaks no existing consumer that doesn't read it. Populated when a user provisions an AIQG account; useful for fast joins from JWT claims to AIQG resources without an extra Neo4j hop.
+2. **No new realm.** AIQG reuses the `aether` realm. A new public PKCE client `aiqg-ui` and a new confidential client `aiqg-dashboard-be` are added under the existing realm. The user pool, role taxonomy, and Space membership semantics are unchanged.
+
+See [`aiqg/account.md`](../../aiqg/account.md) for the AIQG-side identity-to-account mapping.
 
 **External References**:
 - [Keycloak Admin REST API](https://www.keycloak.org/docs-api/latest/rest-api/)

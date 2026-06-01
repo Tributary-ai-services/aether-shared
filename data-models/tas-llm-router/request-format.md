@@ -1121,12 +1121,22 @@ request = ChatRequest(
 
 ---
 
+## AIQG (AI Quality Gateway) Cross-Service Note
+
+The `ChatRequest` schema documented above is **unchanged** by the AIQG product. When `tas-llm-router` is processing a request in AIQG mode (per the [AIQG extension spec](../../../tas-llm-router/docs/AIQG-EXTENSION.md)), the router additionally captures an *observational summary* of the request — token counts, context-block detection, tool definition counts, prompt hashes — into a separate CloudEvent (`com.tas.aiqg.request.v1`) on Kafka topic `tas.aiqg.request.v1`. The request itself is forwarded to the vendor unchanged.
+
+AIQG observes; it does not modify the wire `ChatRequest`. Existing internal callers of tas-llm-router (`tas-agent-builder`, `aether-be`, `audimodal`, `llm-invocation`) are unaffected — only requests carrying both `TAS-Auth` and an inbound `Authorization` header enter AIQG mode. See [AIQG request-event model](../aiqg/request-event.md) for the captured observational fields and [AIQG request-structure model](../aiqg/request-structure.md) for the per-request observational sub-structure that summarizes the `ChatRequest` payload.
+
+---
+
 ## Related Documentation
 
 - [Response Format](./response-format.md) - Response structures
 - [Model Configurations](./model-configurations.md) - Supported models and capabilities
 - [Router Architecture](../architecture/router-design.md) - Routing logic
 - [Error Handling](../errors/error-codes.md) - Error codes and handling
+- [AIQG Extension Spec](../../../tas-llm-router/docs/AIQG-EXTENSION.md) - How tas-llm-router observes ChatRequests in AIQG mode
+- [AIQG Request Event](../aiqg/request-event.md) - The CloudEvent and TimescaleDB shape used to capture observations
 
 ---
 

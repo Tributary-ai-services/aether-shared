@@ -1131,6 +1131,15 @@ Key operations:
 - [AudiModal Tenant API](../../audimodal/api/tenants.md) - Tenant creation and management (TODO)
 - [DeepLake Namespacing](../../deeplake-api/namespacing.md) - Vector database isolation (TODO)
 - [Agent Builder Space Schema](../../tas-agent-builder/schema/spaces.md) - Agent isolation (TODO)
+- [AIQG Account Model](../../aiqg/account.md) - Each Space maps 1:1 to an AI Quality Gateway account; tenant_id is the join key
+
+### AIQG (AI Quality Gateway) Cross-Service Note
+
+The Space node is **unchanged** by the AIQG product. AIQG introduces a new Neo4j label `:AIQGAccount` that references this Space by shared `tenant_id` and via a new outgoing relationship `(Space)-[:HAS_AIQG_ACCOUNT]->(AIQGAccount)`. This is purely additive — no Space property is added or modified, and existing Cypher queries that ignore the new relationship continue to work unchanged.
+
+The 1:1 mapping is enforced at the application layer by `aiqg-dashboard-be` via a `CREATE CONSTRAINT` ensuring at most one `:AIQGAccount` per `(:Space)`. Provisioning an AIQG account is idempotent — a second `POST /api/v1/account` from the same Space returns the existing account.
+
+See [`aiqg/account.md`](../../aiqg/account.md) for the AIQGAccount schema and lifecycle.
 
 ### Platform Documentation
 - [Space-Based Implementation Plan](../../../SPACE_BASED_IMPLEMENTATION_PLAN.md) - Overall architecture
