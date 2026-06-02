@@ -339,6 +339,57 @@ Space ID:          (NOT CURRENTLY TRACKED - SHOULD BE)
 Model ID:          claude-3-opus, gpt-4, etc.
 ```
 
+### AIQG (AI Quality Gateway)
+
+The AIQG product introduces a new identifier — `aiqg_account_id` — and a new auth token format (`tas_qg_live_*`). The chain is **additive**: existing identifier flows are unchanged; AIQG identifiers join the chain where Space's `tenant_id` is already established.
+
+**AIQG provisioning chain** (read top-to-bottom; each step is keyed by `tenant_id`):
+
+```
+Keycloak User (sub claim, e.g., 570d9941-f4be-46d6-9662-15a2ed0a3cb1)
+  ↓ Space membership in Neo4j: (User)-[:MEMBER_OF]->(Space)
+Space.tenant_id  (e.g., tenant_1767395606)
+  ↓ 1:1 provisioning: dashboard-be creates AIQGAccount on first sign-in
+AIQGAccount.tenant_id == Space.tenant_id  (one-to-one mapping)
+  ↓ token issuance: aiqg-dashboard-be mints tas_qg_live_* tokens for the account
+AIQGToken (Neo4j node, stored as sha256(token); plaintext shown once)
+  ↓ customer redirects LLM traffic to gateway.aiqg.tas.io
+Request received with headers: TAS-Auth + Authorization (vendor key)
+  ↓ tas-llm-router resolves TAS-Auth via POST /internal/auth/validate
+Account context (account_id, tenant_id, region, scoring_weights) attached to ctx
+  ↓ per-request capture
+AIQG Request Event (request_event_id, tenant_id, aiqg_account_id)
+  ↓ paired with response
+AIQG Response Event (response_event_id, request_event_id, tenant_id)
+  ↓ aggregation
+TimescaleDB aiqg.metrics_* keyed by (tenant_id, scope_type, scope_key, bucket_start)
+  ↓ report generation
+ReportSnapshot (report_id, tenant_id, aiqg_account_id) → MinIO {tenant_id}/{report_id}.{html,pdf}
+```
+
+**Identifier types used by AIQG:**
+
+| Identifier | Format | Scope | Notes |
+|---|---|---|---|
+| `aiqg_account_id` | UUID | per-AIQGAccount | 1:1 with Space.tenant_id |
+| `tas_qg_live_*` token | `tas_qg_live_<base64>` | per-token; shown once at creation | hashed for storage; never recoverable |
+| `request_event_id`, `response_event_id` | UUID | per-request, paired | partition keys on TimescaleDB hypertables |
+| `report_id` | UUID | per-snapshot | immutable; new id per regeneration |
+| `bundle_id`, `policy_rule_id`, `route_rule_id` | UUID | per-tenant policy nodes in Neo4j | versioned via SUPERSEDES edges |
+
+**Header conventions** (per [AIQG extension spec §6](../../../tas-llm-router/docs/AIQG-EXTENSION.md)):
+
+| Header | Carries | Stripped before vendor |
+|---|---|---|
+| `TAS-Auth` | `tas_qg_live_*` token | yes |
+| `Authorization` | customer vendor key | **no — passed through unchanged in Path A** |
+| `TAS-Upstream-Authorization` | per-request vendor key override | yes |
+| `TAS-Policy`, `TAS-Policy-Bundle` | policy override | yes |
+| `TAS-Workflow` | classification override | yes |
+| `TAS-Trace`, `TAS-Dry-Run` | per-request debug flags | yes |
+
+See [AIQG data models](../../aiqg/) for the full schema set.
+
 ---
 
 ## Next Steps
