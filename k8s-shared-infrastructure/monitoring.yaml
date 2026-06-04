@@ -255,11 +255,36 @@ data:
         metrics_path: '/metrics/prometheus'
 
       - job_name: 'llm-router'
+        # Target the tas-llm-router namespace where the Deployment
+        # actually lives. The prior `llm-router` namespace doesn't
+        # exist — this job has been silently failing endpoint
+        # discovery since the service was renamed.
         kubernetes_sd_configs:
         - role: endpoints
           namespaces:
             names:
-            - llm-router
+            - tas-llm-router
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: llm-router.*
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: service
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+
+      - job_name: 'aiqg-metrics'
+        # AIQG metrics endpoint added in tas-llm-router PR #37.
+        # Same service endpoints as the legacy /metrics job, but
+        # different path served by promhttp on a dedicated registry
+        # (pkg/aiqg/metrics).
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - tas-llm-router
+        metrics_path: /aiqg/metrics
+        scrape_interval: 15s
         relabel_configs:
         - source_labels: [__meta_kubernetes_service_name]
           action: keep
