@@ -8,6 +8,16 @@ metadata:
     component: monitoring
 spec:
   replicas: 1
+  # Recreate (NOT RollingUpdate): with replicas=1 and a single PVC,
+  # a rolling-update tries to start the new pod before the old one
+  # releases the storage lock — new pod fails with "lock DB
+  # directory: resource temporarily unavailable" and crashloops
+  # until manual intervention. Recreate terminates the old pod
+  # first, accepting a few seconds of metrics-scrape gap in exchange
+  # for clean rollouts. (Source-synced 2026-06-04 after the
+  # aiqg-metrics scrape-config rollout hit this deadlock.)
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: prometheus-shared
