@@ -27,10 +27,13 @@ data:
     discovery.relabel "kubernetes_pods" {
       targets = discovery.kubernetes.pods.targets
 
-      // Keep pods from multiple TAS namespaces
+      // Keep pods from multiple TAS namespaces. Add new namespaces
+      // here as services launch — Alloy filters everything else out
+      // before it reaches Loki, so a missing entry produces silent
+      // "no logs in Grafana" surprises (see aiqg added 2026-06-05).
       rule {
         source_labels = ["__meta_kubernetes_namespace"]
-        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events|tas-mcp-servers)"
+        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events|tas-mcp-servers|aiqg)"
         action = "keep"
       }
 
