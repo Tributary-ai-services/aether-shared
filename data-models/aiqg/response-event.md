@@ -78,7 +78,14 @@ data: <ResponseEvent JSON, see §2.2>
 | `tenant_id` | UUID | Yes | from req | Denormalized from [[request-event]] for fast tenant-scoped queries. Matches `space.tenant_id`. |
 | `aiqg_account_id` | UUID | Yes | from req | Denormalized from [[request-event]] / [[account]] for fast account-scoped queries. |
 
-> **Denormalization rationale.** `tenant_id` and `aiqg_account_id` live on [[request-event]] too. Duplicating them here avoids a join on every dashboard query and lets TimescaleDB use the composite index (`tenant_id`, `complete_at`) directly. The trade-off (write-amplification + drift risk) is acceptable because both fields are immutable for the life of a request and they live in the same emit-time path.
+> **Denormalization rationale.** `tenant_id`, `aiqg_account_id`, `vendor`, and `model` live on [[request-event]] too. Duplicating them here avoids a join on every dashboard query and lets TimescaleDB use the composite index (`tenant_id`, `complete_at`) directly. The trade-off (write-amplification + drift risk) is acceptable because all four are immutable for the life of a request and they live in the same emit-time path.
+
+#### Routing Attribution
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `vendor` | enum | No | from req | Denormalized from the [[request-event]] routing decision (`openai`, `anthropic`, …). Lets per-vendor cost/token dashboards read the response stream directly without joining the request event, and survives a lost request event (see [§12 KI-2](#12-known-issues)). |
+| `model` | text | No | from req | Denormalized vendor model id (e.g. `gpt-4o-mini`, `claude-haiku-4-5-20251001`). Same source as [[request-event]] `model`; powers per-model rollups in [[aggregated-metrics]] (the `model` scope dimension). |
 
 #### Outcome & Status
 
@@ -153,6 +160,10 @@ CREATE TABLE aiqg.response_events (
     request_event_id    uuid        NOT NULL,
     tenant_id           uuid        NOT NULL,
     aiqg_account_id     uuid        NOT NULL,
+
+    -- routing attribution (denormalized from request-event)
+    vendor              text,
+    model               text,
 
     -- outcome
     complete_at         timestamptz NOT NULL,
@@ -323,6 +334,9 @@ A response event is emitted for **every** terminal state. There is no path where
     "request_event_id":  "8f2a1d6c-3e9b-4a25-9c8a-1b5d3e7f0a44",
     "tenant_id":         "5b3d7e9f-1a2c-4d8e-9f0a-3c5e7b9d1f2a",
     "aiqg_account_id":   "acct_01J0Z8M2X9Y7C4N6V0P5R8T1QA",
+
+    "vendor":            "anthropic",
+    "model":             "claude-haiku-4-5-20251001",
 
     "complete_at":       "2026-05-31T14:22:18.412573Z",
     "status":            "success",
