@@ -515,6 +515,13 @@ metadata:
     component: monitoring
 spec:
   replicas: 1
+  # Grafana 13's unified-search bleve index holds a file lock on the
+  # single ReadWriteOnce grafana-data PVC. With RollingUpdate the new
+  # pod cannot acquire the lock while the old pod still holds it, so the
+  # rollout deadlocks (new pod CrashLoopBackOff: "index is locked by
+  # another process"). Recreate terminates the old pod first.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: grafana-shared
@@ -672,6 +679,7 @@ data:
         isDefault: true
         editable: true
       - name: Loki
+        uid: loki
         type: loki
         access: proxy
         url: http://loki-shared:3100
