@@ -23,7 +23,7 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": "Loki",
+      "datasource": {"type": "loki", "uid": "loki"},
       "description": "Overview of log volume across TAS infrastructure services",
       "fieldConfig": {
         "defaults": {
@@ -69,7 +69,7 @@
       },
       "targets": [
         {
-          "datasource": "Loki",
+          "datasource": {"type": "loki", "uid": "loki"},
           "editorMode": "code",
           "expr": "sum by (job) (count_over_time({namespace=\"tas-shared\"}[$__auto]))",
           "queryType": "",
@@ -81,7 +81,7 @@
       "type": "piechart"
     },
     {
-      "datasource": "Loki",
+      "datasource": {"type": "loki", "uid": "loki"},
       "description": "Log levels distribution",
       "fieldConfig": {
         "defaults": {
@@ -134,7 +134,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "datasource": "Loki",
+          "datasource": {"type": "loki", "uid": "loki"},
           "editorMode": "code",
           "expr": "sum by (detected_level) (count_over_time({namespace=\"tas-shared\"} | detected_level != \"\" [$__auto]))",
           "queryType": "",
@@ -145,7 +145,7 @@
       "type": "table"
     },
     {
-      "datasource": "Loki",
+      "datasource": {"type": "loki", "uid": "loki"},
       "description": "Recent log entries from all TAS infrastructure services",
       "gridPos": {
         "h": 12,
@@ -166,7 +166,7 @@
       },
       "targets": [
         {
-          "datasource": "Loki",
+          "datasource": {"type": "loki", "uid": "loki"},
           "editorMode": "code",
           "expr": "{job=~\"$service\"} |= \"$search\"",
           "queryType": "",
@@ -177,7 +177,7 @@
       "type": "logs"
     },
     {
-      "datasource": "Loki",
+      "datasource": {"type": "loki", "uid": "loki"},
       "description": "Error logs across all services",
       "gridPos": {
         "h": 8,
@@ -198,7 +198,7 @@
       },
       "targets": [
         {
-          "datasource": "Loki",
+          "datasource": {"type": "loki", "uid": "loki"},
           "editorMode": "code",
           "expr": "{job=~\".*\"} |~ \"(?i)(error|fatal|exception|failed)\"",
           "queryType": "",
@@ -230,7 +230,7 @@
             "$__all"
           ]
         },
-        "datasource": "Loki",
+        "datasource": {"type": "loki", "uid": "loki"},
         "definition": "label_values(job)",
         "hide": 0,
         "includeAll": true,

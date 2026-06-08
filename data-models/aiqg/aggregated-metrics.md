@@ -126,7 +126,7 @@ Latency p50/p95/p99 are exposed via the `approx_percentile()` accessor over the 
 | `account` | `''` | (no sub-dimension — entire tenant) |
 | `workflow` | `rag`, `summarization`, `chat` | `inferred_labels.workflow_classification` |
 | `route` | `production_strict`, `dev_loose` | `routing.route_name` |
-| `model` | `gpt-4o-mini`, `claude-3-5-sonnet` | `routing.actual_model` |
+| `model` | `gpt-4o-mini`, `claude-3-5-sonnet` | `model` (denormalized on [[response-event]]) |
 | `endpoint` | `chat.completions`, `messages` | `routing.endpoint` |
 | `source_app` | `aether-be`, `tas-agent-builder` | `client_metadata.source_app` |
 
