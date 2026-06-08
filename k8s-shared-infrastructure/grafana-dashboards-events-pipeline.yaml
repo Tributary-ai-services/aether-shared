@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-events-pipeline
+  namespace: tas-shared
+  labels:
+    app: grafana-shared
+    component: dashboards
+data:
+  events-pipeline.json: |
+    {
+      "title": "TAS Events Pipeline (Activity + Compliance)",
+      "uid": "tas-events-pipeline",
+      "tags": ["tas", "events", "activity", "compliance", "timescaledb"],
+      "timezone": "browser",
+      "editable": true,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "schemaVersion": 38,
+      "style": "dark",
+      "refresh": "30s",
+      "time": {"from": "now-1h", "to": "now"},
+      "panels": [
+        {
+          "id": 1,
+          "title": "Events / Minute (last hour)",
+          "type": "timeseries",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "pg-tas-events"},
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+          "targets": [
+            {
+              "rawSql": "SELECT bucket AS \"time\", source AS metric, sum(event_count) AS value FROM events_1m WHERE bucket >= NOW() - INTERVAL '1 hour' GROUP BY bucket, source ORDER BY bucket",
+              "format": "time_series",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20, "stacking": {"mode": "normal"}}},
+            "overrides": []
+          },
+          "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["sum"]}}
+        },
+        {
+          "id": 2,
+          "title": "Events Last 5 min",
+          "type": "stat",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "pg-tas-events"},
+          "gridPos": {"h": 5, "w": 6, "x": 0, "y": 8},
+          "targets": [
+            {
+              "rawSql": "SELECT COALESCE(SUM(event_count), 0)::bigint AS \"events\" FROM events_1m WHERE bucket >= NOW() - INTERVAL '5 minutes'",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}}
+        },
+        {
+          "id": 3,
+          "title": "Active Sources Last 5 min",
+          "type": "stat",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "pg-tas-events"},
+          "gridPos": {"h": 5, "w": 6, "x": 6, "y": 8},
+          "targets": [
+            {
+              "rawSql": "SELECT COUNT(DISTINCT source) AS \"sources\" FROM events_1m WHERE bucket >= NOW() - INTERVAL '5 minutes'",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "id": 4,
+          "title": "Critical+High Events Last 1h",
+          "type": "stat",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "pg-tas-events"},
+          "gridPos": {"h": 5, "w": 6, "x": 12, "y": 8},
+          "targets": [
+            {
+              "rawSql": "SELECT COALESCE(SUM(critical_count + high_count), 0)::bigint AS \"high_severity\" FROM events_1m WHERE bucket >= NOW() - INTERVAL '1 hour'",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}}}
+        },
+        {
+          "id": 5,
+          "title": "Hypertable Total Rows",
+          "type": "stat",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "pg-tas-events"},
+          "gridPos": {"h": 5, "w": 6, "x": 18, "y": 8},
+          "targets": [
+            {
+              "rawSql": "SELECT count(*) AS \"rows\" FROM events",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "id": 6,
+          "title": "Events by Type (last 1h)",
+          "type": "barchart",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "pg-tas-events"},
+          "gridPos": {"h": 9, "w": 12, "x": 0, "y": 13},
+          "targets": [
+            {
+              "rawSql": "SELECT type AS \"type\", SUM(event_count)::bigint AS \"events\" FROM events_1m WHERE bucket >= NOW() - INTERVAL '1 hour' GROUP BY type ORDER BY \"events\" DESC",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "short"}},
+          "options": {"orientation": "horizontal", "xField": "type"}
+        },
+        {
+          "id": 7,
+          "title": "Events by Severity (last 1h)",
+          "type": "piechart",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "pg-tas-events"},
+          "gridPos": {"h": 9, "w": 12, "x": 12, "y": 13},
+          "targets": [
+            {
+              "rawSql": "SELECT severity AS \"severity\", SUM(event_count)::bigint AS \"events\" FROM events_1m WHERE bucket >= NOW() - INTERVAL '1 hour' GROUP BY severity ORDER BY \"events\" DESC",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "options": {"legend": {"displayMode": "table", "placement": "right"}, "pieType": "donut"}
+        },
+        {
+          "id": 8,
+          "title": "Recent Events (last 100)",
+          "type": "table",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "pg-tas-events"},
+          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 22},
+          "targets": [
+            {
+              "rawSql": "SELECT time, type, source, tenant_id, severity, subject FROM events ORDER BY time DESC LIMIT 100",
+              "format": "table",
+              "refId": "A"
+            }
+          ],
+          "options": {"showHeader": true}
+        }
+      ]
+    }
