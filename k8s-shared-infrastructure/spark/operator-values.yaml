@@ -1,0 +1,31 @@
+# Helm values for kubeflow spark-operator on single-node K3s.
+# Install:
+#   helm repo add spark-operator https://kubeflow.github.io/spark-operator
+#   helm upgrade --install spark-operator spark-operator/spark-operator \
+#     --version 2.5.0 \
+#     --namespace tas-shared \
+#     -f aether-shared/k8s-shared-infrastructure/spark/operator-values.yaml
+#
+# Resources intentionally omitted → BestEffort QoS per CLAUDE.md.
+# Re-profile after a week of Spark load via Prometheus.
+
+spark:
+  jobNamespaces:
+    - tas-shared
+
+controller:
+  replicas: 1
+  workers: 4
+  logLevel: info
+
+webhook:
+  enable: true
+  replicas: 1
+  port: 9443
+
+prometheus:
+  metrics:
+    enable: true
+    port: 8080
+  podMonitor:
+    create: false

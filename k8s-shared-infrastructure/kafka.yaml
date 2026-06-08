@@ -118,7 +118,11 @@ spec:
         - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
           value: "1"
         - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
-          value: "true"
+          # Disabled 2026-05-07: a typo like tas.activty.documents would
+          # silently create a 1-partition topic and drop messages. Topics
+          # are managed declaratively via kafka-topics-job.yaml; produce
+          # calls now fail loudly on unknown topic.
+          value: "false"
         resources:
           requests:
             memory: "1Gi"

@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: timescaledb-migrate
+  namespace: tas-shared
+  labels:
+    app: timescaledb-shared
+    component: migration
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: migrate
+        image: timescale/timescaledb:2.13.0-pg15
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          for f in /migrations/*.sql; do
+            echo "Running $(basename $f)..."
+            PGPASSWORD="$POSTGRES_PASSWORD" psql \
+              -h timescaledb-shared \
+              -U "$POSTGRES_USER" \
+              -d "$POSTGRES_DB" \
+              -f "$f"
+          done
+          echo "All migrations complete."
+        env:
+        - name: POSTGRES_DB
+          value: "tas_events"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: timescaledb-shared-secret
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: timescaledb-shared-secret
+              key: password
+        volumeMounts:
+        - name: migrations
+          mountPath: /migrations
+          readOnly: true
+      volumes:
+      - name: migrations
+        configMap:
+          name: timescaledb-migrations
