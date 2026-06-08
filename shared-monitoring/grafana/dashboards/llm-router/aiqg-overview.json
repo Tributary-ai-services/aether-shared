@@ -28,25 +28,20 @@
     "list": [
       {
         "name": "tenant",
-        "type": "query",
-        "label": "Tenant",
-        "datasource": {"type": "loki", "uid": "loki"},
-        "query": "sum by (tenant_id) (count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id != \"\" [$__range]))",
-        "includeAll": true,
-        "allValue": ".*",
-        "refresh": 2,
-        "multi": false,
-        "current": {"text": "All", "value": "$__all"}
+        "type": "textbox",
+        "label": "Tenant id",
+        "description": "Filter by tenant_id (regex). Empty = all tenants. Loki template variables can't enumerate parsed JSON fields, so this is a free-text filter.",
+        "query": "",
+        "current": {"text": "", "value": ""}
       },
       {
         "name": "vendor",
-        "type": "query",
+        "type": "custom",
         "label": "Vendor",
-        "datasource": {"type": "loki", "uid": "loki"},
-        "query": "sum by (vendor) (count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg request event\" | json | vendor != \"\" [$__range]))",
+        "description": "Fixed vendor enum (Loki can't enumerate the parsed vendor field). Add new vendors here as they go live.",
+        "query": "openai,anthropic",
         "includeAll": true,
         "allValue": ".*",
-        "refresh": 2,
         "multi": true,
         "current": {"text": "All", "value": "$__all"}
       }
