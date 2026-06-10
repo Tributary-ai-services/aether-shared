@@ -358,10 +358,13 @@ data:
     discovery.relabel "kubernetes_pods" {
       targets = discovery.kubernetes.pods.targets
 
-      // Keep pods from multiple TAS namespaces
+      // Keep pods from multiple TAS namespaces. Keep this regex in
+      // sync with k8s-shared-infrastructure/logging/alloy-configmap.yaml
+      // — the active Alloy config is the configmap, but this embedded
+      // copy is still applied by loki.yaml's standalone path.
       rule {
         source_labels = ["__meta_kubernetes_namespace"]
-        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events|tas-mcp-servers)"
+        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events|tas-mcp-servers|aiqg|container-registry|dbhub-operator-system)"
         action = "keep"
       }
 
