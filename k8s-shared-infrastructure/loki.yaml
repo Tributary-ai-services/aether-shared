@@ -8,6 +8,12 @@ metadata:
     component: logging
 spec:
   replicas: 1
+  # Single-binary Loki on shared S3: two instances can't hold the compactor
+  # delete-store at once, so a RollingUpdate (which surges to 2) deadlocks —
+  # the new pod fails "init compactor: failed to init delete store: timeout"
+  # while the old one keeps running. Recreate terminates the old pod first.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: loki-shared
@@ -138,6 +144,12 @@ data:
           store: inmemory
 
     query_range:
+      # Activate the results cache. The embedded_cache below is only the
+      # backing store; without cache_results:true Loki configures it but
+      # never uses it, so repeat range queries paid the full ~3s every
+      # time. Enabling it cut warm query_range latency ~28x (2.8s -> 0.1s)
+      # for the AIQG dashboard (verified 2026-06-13).
+      cache_results: true
       results_cache:
         cache:
           embedded_cache:
