@@ -170,6 +170,14 @@ data:
       alertmanager_url: http://alertmanager-shared.tas-shared:9093
 
     limits_config:
+      # The default max_query_series (500) is too low for the AIQG
+      # dashboard's per-event `| json` metric queries — each event becomes
+      # its own series (response_event_id / flow_id / step_id labels), so
+      # avg_over_time/sum_over_time/quantile_over_time over a multi-day
+      # window exceed 500 and 400 (→ dashboard 502) as traffic grows.
+      # Raised to give the Loki fallback path headroom (the at-scale path
+      # reads from TimescaleDB). Verified 2026-06-13: 520-series query 200.
+      max_query_series: 100000
       reject_old_samples: true
       reject_old_samples_max_age: 168h
       ingestion_rate_mb: 10
