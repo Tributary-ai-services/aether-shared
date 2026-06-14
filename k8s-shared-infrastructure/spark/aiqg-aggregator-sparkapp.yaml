@@ -64,7 +64,7 @@ spec:
   mode: cluster
   pythonVersion: "3"
   sparkVersion: 3.5.0
-  image: registry-api.tas.scharber.com/tas-spark-jobs:step-topology
+  image: registry-api.tas.scharber.com/tas-spark-jobs:experiment-variant
   imagePullPolicy: Always
   mainApplicationFile: local:///opt/spark/jobs/aiqg_aggregator/main.py
   deps:
