@@ -164,6 +164,12 @@ When the wizard applies a pack, each rule is created with `action: log`
 at the pattern's `default_severity` (honest for the observe-only phase;
 the user tunes from there).
 
+> **Planned (Phase 4.1, active enforcement):** once the gateway enforces,
+> the standard-pack default should change from `log` to `redact` — a
+> compliance pack that only observes offers no protection. Revisit
+> per-category defaults at the same time (e.g. safety → `block`). Tracked
+> in aiqg-ui (`PolicyBundleWizard.onAddPack`).
+
 ## 6. API
 
 ### `GET /api/v1/policy-patterns`
