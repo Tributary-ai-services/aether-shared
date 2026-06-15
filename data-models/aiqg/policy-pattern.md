@@ -39,12 +39,20 @@ Static Go data compiled into `aiqg-dashboard-be`. No database row, no migration.
 
 ```go
 type PolicyPattern struct {
-    PatternID       string `json:"pattern_id"`
-    Label           string `json:"label"`
-    Description     string `json:"description"`
-    Category        string `json:"category"`             // pii | credential | injection | quality | safety
-    DefaultSeverity string `json:"default_severity"`     // low | medium | high | critical
-    NIST            string `json:"nist_characteristic"`  // valid_reliable | privacy_enhanced | secure_resilient | safe
+    PatternID       string   `json:"pattern_id"`
+    Label           string   `json:"label"`
+    Description     string   `json:"description"`
+    Category        string   `json:"category"`             // pii | credential | injection | quality | safety
+    DefaultSeverity string   `json:"default_severity"`     // low | medium | high | critical
+    NIST            string   `json:"nist_characteristic"`  // valid_reliable | privacy_enhanced | secure_resilient | safe
+    Standards       []string `json:"standards"`            // standard-pack keys this pattern belongs to
+}
+
+type PolicyStandard struct {
+    Key         string `json:"key"`
+    Label       string `json:"label"`
+    Description string `json:"description"`
+    Family      string `json:"family"` // compliance | security | quality
 }
 ```
 
@@ -57,6 +65,7 @@ type PolicyPattern struct {
 | `category` | Grouping for the picker. One of `pii`, `credential`, `injection`, `quality`, `safety`. |
 | `default_severity` | Suggested severity the wizard pre-fills; the rule may override. Drives CLEAR **Assurance** scoring (`critical=0, high=50, medium=80, low=95`) and audit/alert prominence — it does **not** by itself gate enforcement. |
 | `nist_characteristic` | NIST AI RMF characteristic the finding maps to (drives the Trustworthiness breakdown). |
+| `standards` | Standard-pack keys this pattern belongs to (see §5). Lets the wizard bulk-add a complete rule set per standard. A pattern may belong to several packs. |
 
 ---
 
@@ -132,10 +141,34 @@ type PolicyPattern struct {
 
 ---
 
-## 5. API
+## 5. Standard packs
+
+A **standard pack** is a named set of patterns the wizard can add as a
+complete rule set in one click. Packs are grouped into three families and
+stack/de-duplicate, so a pattern in two packs is only added once. Pack
+membership is the single source declared in `standardMembership`
+(handlers/policy_patterns.go); each pattern's `standards` is derived from
+it at init.
+
+| Family | Pack (`key`) | Members |
+|---|---|---|
+| compliance | `gdpr` | all 12 PII patterns |
+| compliance | `hipaa` | `pii-mrn`, `pii-ssn`, `pii-dob`, `pii-name`, `pii-address`, `pii-phone`, `pii-email` |
+| compliance | `pci-dss` | `pii-credit-card`, `pii-bank-account` |
+| compliance | `soc2` | all 9 `cred-*` + 3 `injection-*` |
+| security | `secrets` | all 9 `cred-*` |
+| security | `owasp-llm` | 3 `injection-*`, `aiqg-explicit-jailbreak`, `aiqg-harm-request`, `aiqg-credential-solicitation`, `aiqg-role-claim` |
+| quality | `ai-quality` | the 9 `aiqg-*` quality patterns |
+
+When the wizard applies a pack, each rule is created with `action: log`
+at the pattern's `default_severity` (honest for the observe-only phase;
+the user tunes from there).
+
+## 6. API
 
 ### `GET /api/v1/policy-patterns`
-Read-only, authenticated (any tenant member). Returns the full catalog.
+Read-only, authenticated (any tenant member). Returns the catalog and the
+standard packs.
 
 ```json
 {
@@ -146,15 +179,19 @@ Read-only, authenticated (any tenant member). Returns the full catalog.
       "description": "Detects U.S. Social Security numbers in prompts or completions.",
       "category": "pii",
       "default_severity": "critical",
-      "nist_characteristic": "privacy_enhanced"
+      "nist_characteristic": "privacy_enhanced",
+      "standards": ["gdpr", "hipaa"]
     }
+  ],
+  "standards": [
+    { "key": "gdpr", "label": "GDPR", "description": "EU personal-data protection — every PII detector.", "family": "compliance" }
   ]
 }
 ```
 
 ---
 
-## 6. Relationships
+## 7. Relationships
 
 - A [[policy-rule]]'s `pattern_id` references a `PolicyPattern.pattern_id`. The rule's own `severity` defaults from `PolicyPattern.default_severity` (wizard pre-fill) and may be overridden.
 - A [[policy-bundle]] is an ordered composition of rules.
@@ -162,7 +199,7 @@ Read-only, authenticated (any tenant member). Returns the full catalog.
 
 ---
 
-## 7. Action semantics (context for the wizard)
+## 8. Action semantics (context for the wizard)
 
 A rule pairs a `pattern_id` with an `action`:
 - **log** — record the finding; no mutation, no block.
