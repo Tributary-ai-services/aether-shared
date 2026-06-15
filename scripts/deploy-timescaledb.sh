@@ -23,6 +23,7 @@ kubectl create configmap timescaledb-migrations \
   --from-file="$MIGRATIONS_DIR/001_events.sql" \
   --from-file="$MIGRATIONS_DIR/002_aggregates.sql" \
   --from-file="$MIGRATIONS_DIR/003_retention.sql" \
+  --from-file="$MIGRATIONS_DIR/004_aiqg_event_metrics.sql" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # 4. Delete previous migration job if it exists (jobs are immutable)
