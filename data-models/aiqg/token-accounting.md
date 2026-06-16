@@ -130,24 +130,37 @@ SELECT create_hypertable('aiqg.response_events', 'occurred_at',
 
 **numeric(10,6) precision rationale:** maximum plausible single-request cost is ~$10 (large agentic tool-use loop with multiple GPT-4 32k turns). 4 decimal places fully cover sub-cent precision; 6 leaves room for batched aggregation without precision loss.
 
-### 3.4 Waste decomposition (CLEAR Cost three-category model)
+### 3.4 Waste decomposition (CLEAR Cost three-category model) — Contract v1 (projected)
 
-Populated by the CLEAR cost scorer at request close ([build-vs-reuse §7.2](./build-vs-reuse.md#72-clear-scoring-location--decided-gateway-side-go)). Sources the three categories defined in [source-spec-v0.2 §2.1](./source-spec-v0.2.md):
+Populated by the CLEAR cost scorer at request close ([build-vs-reuse §7.2](./build-vs-reuse.md#72-clear-scoring-location--decided-gateway-side-go)), implemented in `tas-llm-router/pkg/clear/cost_decomposer.go` (`DecomposeCost`). Sources the three categories defined in [source-spec-v0.2 §2.1](./source-spec-v0.2.md).
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `direct_payload_waste_tokens` | int \| null | no | Input tokens spent on context blocks the model did not attribute to its output. **MVP heuristic**: embed each retrieved-context block, embed the output, compute cosine similarity; flag blocks below threshold (default 0.30) as unattributed. Refined in Phase 2 via LLM-as-judge attribution sampling. `null` when the request had no structured context blocks (e.g. raw chat). |
-| `direct_payload_waste_usd` | numeric \| null | no | `direct_payload_waste_tokens` priced at `input_unit_price_usd` (cache-hit tokens excluded — they're already cheap; attributing waste there double-counts). |
-| `induced_output_waste_estimated_usd` | numeric \| null | no | Estimated cost of retries/abandonment attributed to pre-model noise. **MVP heuristic**: when this request is flagged `retry_of_previous` in [[inferred-labels]] AND the original request had detectable context bloat (>50% direct payload waste), attribute the *previous* request's `actual_cost_usd` here. `null` when not a retry. |
-| `genuine_post_model_waste_usd` | numeric \| null | no | Residual category: `status=error`, `finish_reason=content_filter`, or judged-wrong on clean input. **MVP heuristic**: full request cost when error/filter; LLM-as-judge sampling refines on clean-input failures. `null` for successful, ungraded requests. |
+**Contract v1 is the *projected* basis** (cheap inline heuristic — no embeddings, no network, <1ms; runs on 100% of priced traffic). The embed+cosine attribution method is the *measured* basis and moves to **Contract v2** (policy-gated / experiment, see [[experiment]]). Only emitted on **priced** traffic (`actual.Priced`); never fabricated on unpriced.
 
-**Why each field is nullable in MVP:** the heuristic-driven decomposition is *best-effort*. Treating "not computed" as `0` would systematically understate addressable waste in dashboards. Treating it as `null` signals "we don't know" so percentile rollups exclude these rows correctly.
+| Field | Type | Description |
+|---|---|---|
+| `reduction_mode` | string | `"projected"` in v1 (v2 adds `shadow`/`active`). Filters projected-vs-measured rollups. |
+| `actual_cost_usd` | numeric | Billed total — the invariant denominator (`= total_cost_usd` in v1). |
+| `actual_cost_source` | string | `"vendor_usage"` (vendor-reported counts) \| `"computed"`. |
+| `context_efficiency_ratio` | numeric \| null | CER proxy `clamp(r/(r+0.5))`, `r = completion/prompt`, ×0.7 when inbound bloat findings present. Nullable: `0.0` (all context wasted) is meaningful vs absent. |
+| `projected_direct_payload_waste_tokens` / `_usd` | int / numeric | Input tokens/dollars projected droppable = `prompt·(1−CER)` priced at the input rate. |
+| `direct_payload_waste_tokens` / `_usd` | int / numeric | **Documented alias = the projected basis** (Contract v1 D1-B; *not* COALESCE). Kept so the existing bound-invariant CHECK + dashboards keep working — relabel "projected" in UI. |
+| `projected_reduction_relevance_usd` (+ `_confidence`) | numeric / string | Relevance/top-K standalone savings ≈ direct payload waste. Confidence `medium`. |
+| `projected_reduction_slm_usd` (+ `_confidence`) | numeric / string | SLM-rewrite standalone savings (~25% prompt compression prior). Confidence `low`. |
+| `projected_reduction_combined_usd` | numeric | Compound of the two: `inputCost·(1−(1−relFrac)(1−0.25))`. |
+| `induced_output_waste_estimated_usd` | numeric | **0 in v1** (retry linkage is Contract v2). |
+| `genuine_post_model_waste_usd` | numeric | Spend no reduction could save: full cost on `status≥400`/`content_filter`; output cost on high/critical outbound findings; else 0. |
+| `gateway_addressable_pct` | numeric | `(direct + induced) / actual_cost_usd × 100`. |
+
+**Bound invariant (#6):** `direct + induced + genuine ≤ actual_cost_usd`, enforced by a clamp in `DecomposeCost` (genuine first, then direct against the remaining budget) — the Go `TestDecompose_BoundInvariant` is the canary for the eventual SQL CHECK.
+
+**NOT in v1 (→ Contract v2):** `actual_direct_payload_reduction_*`, per-method `actual_reduction_{relevance,slm}_usd`, and quality deltas — these come only from the real extractor under an experiment.
 
 ### 3.5 Scoring provenance
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `scoring_version` | string | yes | Identifier of the CLEAR scorer implementation that wrote the waste-decomposition fields. Format: `clear-<semver>` (e.g. `clear-1.0.0`). Required for retroactive re-scoring — see [build-vs-reuse §7.2](./build-vs-reuse.md#72-clear-scoring-location--decided-gateway-side-go). |
+| `scoring_version` | string | yes | Identifier of the CLEAR scorer that wrote the decomposition. Current: **`clear-v0.2-cost-decomp`** (`pkg/clear/clear.go` `Version`). Bumped when a formula changes so Spark re-scores old rows — see [build-vs-reuse §7.2](./build-vs-reuse.md#72-clear-scoring-location--decided-gateway-side-go). |
+| `model_pricing_version` | string | yes | Pricing table identifier (current `pricing-v2026-06-05`). Distinct from `scoring_version` — rates change independently of the formula. |
 
 ---
 
