@@ -153,7 +153,21 @@ Populated by the CLEAR cost scorer at request close ([build-vs-reuse §7.2](./bu
 
 **Bound invariant (#6):** `direct + induced + genuine ≤ actual_cost_usd`, enforced by a clamp in `DecomposeCost` (genuine first, then direct against the remaining budget) — the Go `TestDecompose_BoundInvariant` is the canary for the eventual SQL CHECK.
 
-**NOT in v1 (→ Contract v2):** `actual_direct_payload_reduction_*`, per-method `actual_reduction_{relevance,slm}_usd`, and quality deltas — these come only from the real extractor under an experiment.
+### 3.4.1 Contract v2 — measured reduction (Phase 2, shadow/active)
+
+Populated only when the **real** Gatekeeper extractor runs on a request (`reduction_mode` ∈ {`shadow`, `active`}; see [[extraction-policy]]). Under Contract v1 (`projected`) these are absent. Defined here so emitter/consumers are ready; the gateway execution slice populates them.
+
+| Field | Type | Description |
+|---|---|---|
+| `reduction_mode` | string | now also emits `shadow` (measured, not applied) / `active` (applied). |
+| `reduction_sampled` | bool | request was in the `sample_rate` shadow sample (i.e. the extractor actually ran). |
+| `actual_direct_payload_reduction_tokens` / `_usd` | int / numeric | **measured** input reduction from the real extractor (vs the v1 *projected* `direct_payload_waste_*`). |
+| `actual_reduction_relevance_usd` | numeric | measured saving from the relevance/top-K step. |
+| `actual_reduction_slm_usd` | numeric | measured saving from the SLM step. |
+| `reduction_efficacy_delta` | numeric \| null | CLEAR Efficacy change vs the un-reduced baseline (shadow eval). Nullable: measured-0 vs not-measured. |
+| `reduction_assurance_delta` | numeric \| null | CLEAR Assurance change vs baseline. Same null semantics. |
+
+Projected-vs-actual reconciliation lives on the event (compare the v1 `projected_*` with these). `scoring_version` bumps when the gateway starts populating these (the execution slice).
 
 ### 3.5 Scoring provenance
 
