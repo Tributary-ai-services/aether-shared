@@ -27,6 +27,7 @@ This directory contains the 16 data-model docs and the master plan for the AIQG 
 | [policy-bundle.md](./policy-bundle.md) | Named, versioned policy bundle collections (Neo4j) |
 | [policy-rule.md](./policy-rule.md) | Individual rule definitions composed into bundles (Neo4j) |
 | [policy-pattern.md](./policy-pattern.md) | Canonical Gatekeeper matcher catalog a rule's pattern_id references (read-only) |
+| [extraction-policy.md](./extraction-policy.md) | The `reduction` block of PolicyBundle.Spec — payload-reduction config (Plan #7 Phase 2) |
 | [route-rule.md](./route-rule.md) | URL/header/source/workflow/time matchers → policy bundle resolution (Neo4j) |
 | [audit-log-entry.md](./audit-log-entry.md) | Immutable audit trail (TimescaleDB) |
 | [aggregated-metrics.md](./aggregated-metrics.md) | CLEAR rollups per workflow/route/account, 1m/5m/1h/1d windows (TimescaleDB continuous aggregates) |
