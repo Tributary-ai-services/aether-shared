@@ -1,0 +1,85 @@
+# Ollama — embeddings backend for the AIQG payload-reduction (extraction)
+# pipeline. Gatekeeper's embedder calls Ollama's /api/embed; the gateway
+# uses it in shadow mode to measure relevance-based context reduction.
+#
+# CPU-only node → embeddings model (all-minilm, ~45MB) only. The SLM step
+# (phi3.5) would want a GPU and is left disabled for now.
+#
+# BestEffort QoS per the TAS K8s policy (single-node cluster). all-minilm
+# is tiny; profile before adding requests.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: tas-shared
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: tas-shared
+  labels:
+    app: ollama
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # RWO volume — can't run two pods mounting it
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.5.7
+          ports:
+            - name: http
+              containerPort: 11434
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0:11434"
+            - name: OLLAMA_KEEP_ALIVE
+              value: "-1" # keep the embed model resident
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: tas-shared
+  labels:
+    app: ollama
+spec:
+  selector:
+    app: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
