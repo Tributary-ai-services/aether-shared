@@ -1,0 +1,147 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "id": null,
+  "uid": "aiqg-cost-destruction",
+  "title": "TAS — AIQG Cost Destruction (Payload Reduction)",
+  "description": "Plan #7 payload-reduction: realized active savings, projected-vs-measured, reduction-mode mix, and the Efficacy/Assurance safety view on reduced traffic. Loki-backed (reduction fields are promoted onto the aiqg response event).",
+  "tags": ["aiqg", "cost", "payload-reduction"],
+  "timezone": "",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "type": "textbox",
+        "label": "Tenant id",
+        "description": "Filter by tenant_id (regex). Empty = all tenants.",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      },
+      {
+        "name": "vendor",
+        "type": "custom",
+        "label": "Vendor",
+        "description": "Fixed vendor enum (Loki can't enumerate parsed fields).",
+        "query": "openai,anthropic",
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Realized active savings (range)",
+      "description": "Measured USD reclaimed by applied (active) payload reduction over the window.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }, "orientation": "horizontal", "textMode": "auto", "colorMode": "value", "graphMode": "area", "justifyMode": "auto" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 5, "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | reduction_mode=\"active\" | unwrap actual_direct_payload_reduction_usd [$__interval]))", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Projected avoidable (combined, range)",
+      "description": "Always-on heuristic estimate of what payload reduction could save over the window.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }, "orientation": "horizontal", "textMode": "auto", "colorMode": "value", "graphMode": "area", "justifyMode": "auto" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 5, "color": { "mode": "fixed", "fixedColor": "blue" } } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap projected_reduction_combined_usd [$__interval]))", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Active share of reduced traffic",
+      "description": "Fraction of extractor-touched requests that were APPLIED (active) vs measured-only (shadow) — the ramp progress.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "horizontal", "textMode": "auto", "colorMode": "value", "graphMode": "area", "justifyMode": "auto" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "color": { "mode": "fixed", "fixedColor": "purple" } } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "expr": "sum(count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | reduction_mode=\"active\" [$__interval])) / sum(count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | reduction_mode=~\"active|shadow\" [$__interval]))", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Projected vs measured savings (USD / interval)",
+      "description": "Calibration: heuristic projection (all traffic) vs measured reduction (active + shadow).",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 5, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 } } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "legendFormat": "projected (combined)", "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap projected_reduction_combined_usd [$__interval]))", "refId": "A" },
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "legendFormat": "measured (active+shadow)", "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | reduction_mode=~\"active|shadow\" | unwrap actual_direct_payload_reduction_usd [$__interval]))", "refId": "B" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Reduction mode mix (req/s)",
+      "description": "Traffic by reduction_mode — projected (heuristic only), shadow (measured), active (applied).",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 1, "stacking": { "mode": "normal" } } } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "legendFormat": "{{reduction_mode}}", "expr": "sum by (reduction_mode) (rate({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | reduction_mode=~\"active|shadow|projected\" [$__interval]))", "refId": "A" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Efficacy — reduced (active) vs baseline",
+      "description": "CLEAR Efficacy on applied-reduction traffic vs the rest. A widening gap below baseline is the signal the auto-rollback worker trips on.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2 } } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "legendFormat": "active", "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | reduction_mode=\"active\" | unwrap clear_efficacy [$__interval]))", "refId": "A" },
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "legendFormat": "baseline (non-active)", "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | reduction_mode!=\"active\" | unwrap clear_efficacy [$__interval]))", "refId": "B" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Assurance — reduced (active) vs baseline",
+      "description": "CLEAR Assurance on applied-reduction traffic vs the rest — the second quality safety gate.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2 } } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "legendFormat": "active", "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | reduction_mode=\"active\" | unwrap clear_assurance [$__interval]))", "refId": "A" },
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "legendFormat": "baseline (non-active)", "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | reduction_mode!=\"active\" | unwrap clear_assurance [$__interval]))", "refId": "B" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Context efficiency ratio (avg)",
+      "description": "Share of input context the model actually used — lower = more droppable bloat.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 } } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "legendFormat": "context efficiency", "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap context_efficiency_ratio [$__interval]))", "refId": "A" }
+      ]
+    }
+  ]
+}
