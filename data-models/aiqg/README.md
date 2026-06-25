@@ -31,6 +31,7 @@ This directory contains the 16 data-model docs and the master plan for the AIQG 
 | [route-rule.md](./route-rule.md) | URL/header/source/workflow/time matchers → policy bundle resolution (Neo4j) |
 | [audit-log-entry.md](./audit-log-entry.md) | Immutable audit trail (TimescaleDB) |
 | [aggregated-metrics.md](./aggregated-metrics.md) | CLEAR rollups per workflow/route/account, 1m/5m/1h/1d windows (TimescaleDB continuous aggregates) |
+| [metrics-computation.md](./metrics-computation.md) | **How every metric is computed end-to-end** — exact CLEAR dimension formulas, cost decomposition, NIST mapping, derived reports (avoidable cost/groundedness/drift), experiment verdict + significance, agent/flow rollups; plus the per-metric Loki/TimescaleDB source map (verified against live cont-aggregates) |
 | [report-snapshot.md](./report-snapshot.md) | Frozen Day-1 + periodic report artifacts (PostgreSQL + MinIO) |
 | [workflow-classification.md](./workflow-classification.md) | Six-type taxonomy + detection signals (Gatekeeper rule pack) |
 
