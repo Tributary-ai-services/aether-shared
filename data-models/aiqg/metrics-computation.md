@@ -327,3 +327,77 @@ verified against the **live** TimescaleDB cont-aggregate definitions (`event_met
 read-path map confirmed against `client.go`. §11–13 from a code sweep of `verdict.go`/`significance.go`,
 `reduction_reconciliation.go`, and `Query{Agent,Flow,Experiment}*`. Pricing rates (§1.2) and the cont-agg
 rollup policies are point-in-time — re-confirm `PricingVersion` / `clear.Version` when those bump.
+
+---
+
+## 15. Worked numeric examples
+
+One concrete substitution per metric. All scores are integers (`int16`); intermediate math is real-valued, truncated at the end (`Score(x)` truncates toward zero).
+
+### 15.1 Latency (§1.1)
+A `rag` request (target = 5000 ms), actual end-to-end = **6000 ms**:
+`100 − 50×(6000/5000 − 1) = 100 − 50×0.20 = 100 − 10 = 90` → **90 (Healthy)**.
+A `code_generation` request (target 30000 ms) taking **45000 ms**: `100 − 50×(1.5−1) = 75` → **75** (the Healthy↔Marginal edge).
+
+### 15.2 Cost dollars + Cost score (§1.2)
+`gpt-4o` (in 0.00250, out 0.01000 per 1k), prompt 1000 / completion 500:
+`DollarCost = (1000/1000)×0.00250 + (500/1000)×0.01000 = 0.00250 + 0.00500 = $0.00750`.
+Score: `100 − 25×log10(0.00750 × 10000) = 100 − 25×log10(75) = 100 − 25×1.8751 = 100 − 46.88 = 53.1` → **53 (Marginal)**.
+
+### 15.3 Efficacy (§1.3)
+Anthropic `finish_reason = "end_turn"` → normalizes to `stop` → **100**. `"max_tokens"` → `length` → **60**. `"refusal"`-style `content_filter` → **0**.
+
+### 15.4 Assurance (§1.4)
+Findings = {inbound: 1 medium, 2 low; outbound: 0}. Worst severity = **medium** → **80**. Add one outbound `critical` → worst = critical → **0** (one critical floors it regardless of the clean checks).
+
+### 15.5 Reliability (§1.5)
+`attempt_count=2, fallback_used=false` → base **75**. Same with `fallback_used=true` → `75 − 25 =` **50**. `attempt_count=1, fallback=false` → **100**.
+
+### 15.6 Composite (§1.6)
+All five present — Cost 53, Latency 90, Efficacy 100, Assurance 80, Reliability 75:
+`(53+90+100+80+75)/5 = 398/5 = 79.6` → integer division → **79**.
+Only two present (no scan, no timing, single attempt) — Cost 53, Efficacy 100: `(53+100)/2 = 76` → **76**. (The nils simply don't participate.)
+
+### 15.7 Cost decomposition (§3)
+`gpt-4o`, prompt 2000 / completion 200, HTTP 200, no findings:
+- `input_cost = (2000/1000)×0.00250 = $0.00500`; `output_cost = (200/1000)×0.01000 = $0.00200`; **total = $0.00700**.
+- `r = 200/2000 = 0.10`; `CER = 0.10/(0.10+0.5) = 0.1667`; `relFrac = 0.8333`.
+- `direct_usd = 0.00500 × 0.8333 = $0.004167`; `direct_tokens = round(2000×0.8333) = 1667`.
+- `relevance_usd = $0.004167`; `slm_usd = 0.00500×0.25 = $0.00125`; `combined_usd = 0.00500×(1 − 0.1667×0.75) = 0.00500×0.875 = $0.004375`.
+- `induced = 0`, `genuine = 0`; **`gateway_addressable_pct = 0.004167/0.00700 = 59.5%`**.
+
+*Bloat variant* (`InboundBloatFindings > 0`): `CER = 0.1667×0.7 = 0.1167` → `relFrac = 0.8833` → `direct = $0.004417` → addressable **63.1%** (flagged padding ⇒ more droppable).
+*Failure variant* (`HTTP 500`): `genuine = total = $0.00700`; bound clamp ⇒ `direct = min(0.004167, 0.00700−0.00700) = $0` → addressable **0%** (nothing reduction could have saved).
+
+### 15.8 NIST (§4)
+A request with inbound `pii-email` + inbound `injection-prompt`, and outbound `aiqg-hallucination-hedge`:
+`nist_privacy_enhanced=1`, `nist_secure_resilient=1`, `nist_valid_reliable=1`, `nist_safe=0`; `assurance_inbound_count=2`, `assurance_outbound_count=1`.
+
+### 15.9 Avoidable cost (§7.2)
+Window `total_cost_usd = $10.00`; tagged sums — refusal $0.50, bloat $1.20, hedging $0.30, vague $0.00:
+`avoidable = min(0.50+1.20+0.30+0.00, 10.00) = $2.00`; `avoidable_pct = 20%`; per-category `pct_of_total`: bloat 12%, refusal 5%, hedging 3%.
+
+### 15.10 Groundedness (§7.3)
+`rag_count=100`, `cited=80`, `total_citations=240`: `uncited = 20`, `cited_pct = 80%`, `avg_citations_per_cited = 240/80 = 3.0`.
+
+### 15.11 Drift (§7.4)
+Composite current 82 vs previous 78: `(82−78)/78 × 100 = +5.13%` → **up**. Total cost $12 vs $10: **+20% up**.
+
+### 15.12 1m→1h weighted rollup (§8)
+Two minute-buckets: A = 10 requests @ avg_composite 80, B = 30 @ 90.
+1h: `(80×10 + 90×30)/(10+30) = 3500/40 = 87.5`. (A naive `(80+90)/2 = 85` would be wrong — the weighting keeps the rollup equal to the true mean.)
+
+### 15.13 Experiment verdict + significance (§11)
+Control: n=100, avg_cost $0.010, cost_sd $0.004, composite 85. Variant: n=100, avg_cost $0.009, cost_sd $0.004, composite 84. Objective = cost.
+- `objDelta = (0.009−0.010)/0.010 = −0.10` → **10% cheaper** (≤ −5% win).
+- Quality: `(84−85)/100 = −0.01 ≥ −0.05` → **non-inferior**. Per-variant status = **promote**.
+- z-test: `se = √(0.004²/100 + 0.004²/100) = √(3.2e-7) = 0.0005657`; `z = −0.001/0.0005657 = −1.77`; `p = 2×(1−Φ(1.77)) ≈ 0.077` → **directional** (p ≥ 0.05).
+- ⇒ **NOT promotable** (promotion needs `significance = clear`); experiment recommendation: *"no clear winner yet — keep control."*
+
+Same effect size at **n=400** each: `se = √(0.004²/400 ×2) = 0.0002828`; `z = −3.54`; `p ≈ 0.0004` → **clear**; 95% CI on the cost delta `= −0.001 ± 1.96×0.0002828 = [−15.5%, −4.5%]` of control → entirely negative ⇒ **promote the variant**. (4× the samples flips the *same* 10% win from "directional" to a confident "promote.")
+
+### 15.14 Reduction reconciliation (§12)
+Relevance: projected $12.50, measured $13.40 → ratio `13.40/12.50 = 1.072` (heuristic **under-projected** by 7.2%). SLM: $8.20 vs $7.95 → 0.969 (over-projected). Combined: $20.70 vs measured-direct $21.35 → 1.031.
+
+### 15.15 Agent/flow rollup (§13)
+Agent "Coder" over the window: 50 events (`packets`), 4 distinct `flow_id`s (`flows=4`), `sum(total_cost_usd)=$0.42`, 2 events with status ∉ {success, policy_blocked} (`errors=2`), 3 events with `assurance_inbound+outbound > 0` (`flagged=3`), `mode(identity_source) = "linked"` (dominant tier). A flow with 5 steps spanning 10:00:00→10:00:42 reports `steps=5`, `span≈42s`.
