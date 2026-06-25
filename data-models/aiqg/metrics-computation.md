@@ -288,6 +288,11 @@ Per variant: any quality/efficacy/assurance regression < −5pp ⇒ **reject**; 
 
 So both are just `avg(value)`/`count(*)` over the relevant `response_feedback` rows; the verdict then prefers pairwise › judge › CLEAR composite (§11.4).
 
+> **Operational status — verified 2026-06-25 (dev cluster); point-in-time, re-check when the deployment changes.**
+> - **Pointwise judge: RUNNING** on the AIQG gateway `llm-router-aiqg` — `AIQG_JUDGE_MODEL=claude-haiku-4-5-20251001`, `AIQG_JUDGE_SAMPLE_PCT=20`. Confirmed by live data in `aiqg.response_feedback`: 55 `judge` rows (18 in the trailing 7 days, latest 2026-06-22), workflow-tagged, rubric `v1`, scores ~0.81 avg.
+> - **Pairwise shadow-eval: OFF** — `AIQG_SHADOW_EVAL_PCT=0`. Only 4 stale `judge_pairwise` rows (all 2026-06-14, none recent).
+> - **Consequence:** with no recent pairwise samples, the verdict's active quality signal today is the **pointwise judge** (§11.4 falls through pairwise → judge → CLEAR composite). The judge scores only AIQG-attributed, non-streaming responses, so it covers the AIQG gateway path, not the internal `llm-router`.
+
 ### 11.8 Judge calibration (is the judge trustworthy?) — `GET /judge/calibration`
 Reference-free agreement between the judge and **human** feedback on the same response (`JudgeCalibrationPairs` joins `signal_type='judge'` rows to human rows on `response_event_id`). Human signals normalized to [0,1]: thumb/accept_reject `(value+1)/2` · rating(1–5) `(value−1)/4` · task_success unchanged. Then: **agreement rate** = fraction where both ≥ 0.5 or both < 0.5; **bias** = `mean(judge) − mean(human)` (+ ⇒ lenient judge); **MAE** = `mean(|judge − human|)`; computed overall and per workflow.
 
