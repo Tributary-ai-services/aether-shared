@@ -235,6 +235,7 @@ about which **read path** serves each report. Exceptions (single-source) are cal
 | Drift — **p95 latency** | **Loki only** | percentiles aren't in the cont-aggs |
 | Latency decomposition stages — `gateway_ingress/egress/overhead_ms`, `vendor_ttfb/ttft/generation_ms`, `median_inter_token_ms` | **Loki only** | not denormalized as TS columns; the handler reads Loki by design (panel-refresh latency is fine) |
 | Experiment per-variant results + verdict (§11) | **TS only** | no TS ⇒ `source="none"` (zeros, UI still renders); Loki used only for a supplementary status query |
+| Experiment quality signals — judge score, pairwise win-rate (§11.7) | **Postgres** (`response_feedback`) | scored by the LLM judge in the gateway, stored as feedback rows; aggregated `avg(value)`/`count(*)` per variant — neither Loki nor the event-metrics TS |
 | Imported-trace metrics (Plan #12) | **TS only** | isolated `aiqg.imported_event_metrics` table; no Loki path |
 
 > **Why "both" for most:** Spark batch lag (≈30s–minutes) means a just-emitted event reaches Loki
@@ -270,6 +271,25 @@ Per arm over the window: `requests = count(*)`; `error_rate = avg(CASE WHEN stat
 
 ### 11.6 Per-variant status & experiment recommendation
 Per variant: any quality/efficacy/assurance regression < −5pp ⇒ **reject**; else `objDelta ≤ −5%` ⇒ **promote**; `objDelta ≥ +5%` ⇒ **hold** (loses); within ±5% ⇒ **hold** (flat). Experiment-level: a variant is *promotable* only if status=promote **and** significance=`clear` (p<0.05) → recommend "promote X"; multiple ⇒ "pick the largest objective win"; any insufficient arm ⇒ "keep collecting"; else "no clear winner — keep control".
+
+### 11.7 The two quality signals (LLM-judge & pairwise) — how they're produced
+§11.4's quality ladder consumes two signals that are **not** computed in the metrics pipeline — they're scored by an LLM judge in `tas-llm-router` and stored as rows in the dashboard's **Postgres `aiqg.response_feedback`** table (not the event-metrics TS / Loki), then aggregated per variant.
+
+**LLM-as-judge (pointwise)** — `tas-llm-router/pkg/aiqg/judge/judge.go` + `internal/server/judge.go`:
+- Runs **async off the hot path** on a deterministic sample (`JudgeSamplePct`, CRC32 on event id); a no-op when `JUDGE_MODEL` is unset.
+- The judge LLM scores the response against a **workflow-specific rubric** (`RubricVersion=v1`): e.g. `rag` → {faithfulness, answer_relevance} · `code_generation` → {solves_the_prompt, idiomatic} · `single_turn_qa` → {correctness, helpfulness, completeness} · `summarization` → {faithfulness, key_point_coverage, concision} · `agentic` → {goal_completion, correct_tool_use}. Each dimension ∈ [0,1]; **`overall` = the JSON `overall` field or the mean of dimensions**, clamped [0,1]. A parse failure ⇒ **abstain** (excluded, not guessed).
+- The gateway POSTs `overall` → dashboard `POST /internal/judge` → a `response_feedback` row `signal_type='judge'`, `value=overall`, with `experiment_id`/`experiment_variant` denormalized.
+- **Per variant** (`SignalAggByVariant`): `judge_score = avg(value)`, `judge_samples = count(*)` over `signal_type='judge'` `GROUP BY variant`.
+
+**Pairwise shadow-eval (head-to-head)** — `judge/pairwise.go` + `judgeRunner.shadowEval`:
+- Separately sampled (`shadowPct`) on **control-arm** traffic in dry_run/running experiments. Replays the control prompt through each non-control variant's config, then the judge **compares control vs variant for the same prompt** — paired, so it controls for prompt variance. Position bias removed by a deterministic A/B swap (CRC32 on eventId+variant).
+- Result `VariantPreference ∈ {0.0 control-better, 0.5 tie, 1.0 variant-better}` (abstain on parse fail) → POST `/internal/judge` `signal_type='judge_pairwise'`, `value=VariantPreference`, on the variant key.
+- **Per variant:** `pairwise_win_rate = avg(value)` (`> 0.5` ⇒ beats control head-to-head), `pairwise_samples = count(*)`.
+
+So both are just `avg(value)`/`count(*)` over the relevant `response_feedback` rows; the verdict then prefers pairwise › judge › CLEAR composite (§11.4).
+
+### 11.8 Judge calibration (is the judge trustworthy?) — `GET /judge/calibration`
+Reference-free agreement between the judge and **human** feedback on the same response (`JudgeCalibrationPairs` joins `signal_type='judge'` rows to human rows on `response_event_id`). Human signals normalized to [0,1]: thumb/accept_reject `(value+1)/2` · rating(1–5) `(value−1)/4` · task_success unchanged. Then: **agreement rate** = fraction where both ≥ 0.5 or both < 0.5; **bias** = `mean(judge) − mean(human)` (+ ⇒ lenient judge); **MAE** = `mean(|judge − human|)`; computed overall and per workflow.
 
 ---
 
@@ -401,3 +421,8 @@ Relevance: projected $12.50, measured $13.40 → ratio `13.40/12.50 = 1.072` (he
 
 ### 15.15 Agent/flow rollup (§13)
 Agent "Coder" over the window: 50 events (`packets`), 4 distinct `flow_id`s (`flows=4`), `sum(total_cost_usd)=$0.42`, 2 events with status ∉ {success, policy_blocked} (`errors=2`), 3 events with `assurance_inbound+outbound > 0` (`flagged=3`), `mode(identity_source) = "linked"` (dominant tier). A flow with 5 steps spanning 10:00:00→10:00:42 reports `steps=5`, `span≈42s`.
+
+### 15.16 Judge & pairwise quality signals (§11.7)
+**Pairwise** — variant V has 40 head-to-head comparisons: 24 variant-wins (1.0), 6 ties (0.5), 10 control-wins (0.0). `pairwise_win_rate = (24×1 + 6×0.5 + 10×0)/40 = 27/40 = 0.675`; `pairwise_samples = 40`. Verdict quality delta = `0.675 − 0.5 = +0.175` (≥ −0.05 → non-inferior; actually a quality *gain*).
+**Judge** (only used if no pairwise) — V `judge_score = avg = 0.82` over 120 judged rows, control `0.80`: delta = `0.82 − 0.80 = +0.02` → non-inferior. Since `pairwise_samples > 0`, the verdict uses pairwise and ignores this.
+**Calibration** — judge mean 0.78 vs human-normalized mean 0.72 over the paired responses: `bias = +0.06` (judge slightly lenient); if 0.85 of pairs land on the same side of 0.5, `agreement = 85%`.
