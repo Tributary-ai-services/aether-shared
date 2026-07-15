@@ -130,6 +130,23 @@ SELECT create_hypertable('aiqg.response_events', 'occurred_at',
 
 **numeric(10,6) precision rationale:** maximum plausible single-request cost is ~$10 (large agentic tool-use loop with multiple GPT-4 32k turns). 4 decimal places fully cover sub-cent precision; 6 leaves room for batched aggregation without precision loss.
 
+### 3.3.1 Cache-aware cost — as shipped (2026-07)
+
+Cache-aware accounting shipped in `tas-llm-router` (`pkg/clear/cost.go` `CacheAwareCost` + the `pkg/aiqg/events` builder). Anthropic reports cache tokens separately from `input_tokens` (which is **uncached input only**); the gateway now captures them and prices them at their real multiples of the input rate. **Emitted `token_accounting` keys (all additive + `omitempty`, absent when the vendor reported no cache tokens):**
+
+| Field (emitted key) | Type | Description |
+|---|---|---|
+| `cache_read_tokens` | int | Input tokens served from cache — Anthropic `usage.cache_read_input_tokens`. Realizes the anticipated `cached_input_tokens` (§3.1). |
+| `cache_creation_tokens` | int | Tokens billed to **write** the cache — Anthropic `usage.cache_creation_input_tokens`. |
+| `cache_read_cost_usd` | numeric | `cache_read_tokens × input_rate × 0.10` (`CacheReadMultiplier`). |
+| `cache_creation_cost_usd` | numeric | `cache_creation_tokens × input_rate × 1.25` (`CacheWriteMultiplier`, 5-min TTL). |
+| `cache_aware_total_cost_usd` | numeric | True billed total: `uncached_input·1.0 + creation·1.25 + read·0.10 + output`. |
+
+Notes:
+- `prompt_tokens` / `input_tokens` stays **uncached input only** (matches Anthropic `usage.input_tokens`); `total_cost_usd` is **unchanged** (legacy uncached-input + output) for backward compatibility — `cache_aware_total_cost_usd` is the correct billed figure. A Contract-v2 redefinition of `prompt_tokens`/`total_cost_usd` is deliberately deferred.
+- With zero cache tokens, `CacheAwareCost` equals `ActualCost` exactly (no behavior change on uncached traffic).
+- **Naming reconciliation (open):** the earlier draft (§3.1) anticipated `cached_input_tokens` / `cache_creation_input_tokens`; the shipped emitter uses `cache_read_tokens` / `cache_creation_tokens` (closer to Anthropic's API field names). A future pass should reconcile §3.1 + the §2.1 DDL to the shipped keys.
+
 ### 3.4 Waste decomposition (CLEAR Cost three-category model) — Contract v1 (projected)
 
 Populated by the CLEAR cost scorer at request close ([build-vs-reuse §7.2](./build-vs-reuse.md#72-clear-scoring-location--decided-gateway-side-go)), implemented in `tas-llm-router/pkg/clear/cost_decomposer.go` (`DecomposeCost`). Sources the three categories defined in [source-spec-v0.2 §2.1](./source-spec-v0.2.md).
