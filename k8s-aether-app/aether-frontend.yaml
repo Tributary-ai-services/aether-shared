@@ -192,7 +192,9 @@ metadata:
   namespace: aether-be
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Internal CA — public DNS for *.tas.scharber.com points at a private LB IP,
+    # so Let's Encrypt HTTP-01 can't validate. Matches every other TAS service.
+    cert-manager.io/cluster-issuer: "tas-ca-issuer"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     # Increase proxy buffer size for React app
