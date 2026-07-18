@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {"type": "datasource", "uid": "grafana"},
+        "datasource": {
+          "type": "datasource",
+          "uid": "grafana"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -16,14 +19,21 @@
   "graphTooltip": 1,
   "id": null,
   "uid": "aiqg-overview",
-  "title": "TAS — AIQG (AI Quality Gateway) Overview",
+  "title": "TAS \u2014 AIQG (AI Quality Gateway) Overview",
   "description": "Live AIQG event stream from tas-llm-router. Queries the Loki event log; relies on top-level fields promoted by pkg/aiqg/events.LogEmitter.",
-  "tags": ["aiqg", "llm-router", "clear"],
+  "tags": [
+    "aiqg",
+    "llm-router",
+    "clear"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
-  "time": {"from": "now-1h", "to": "now"},
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
@@ -32,7 +42,10 @@
         "label": "Tenant id",
         "description": "Filter by tenant_id (regex). Empty = all tenants. Loki template variables can't enumerate parsed JSON fields, so this is a free-text filter.",
         "query": "",
-        "current": {"text": "", "value": ""}
+        "current": {
+          "text": "",
+          "value": ""
+        }
       },
       {
         "name": "vendor",
@@ -43,7 +56,10 @@
         "includeAll": true,
         "allValue": ".*",
         "multi": true,
-        "current": {"text": "All", "value": "$__all"}
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
       }
     ]
   },
@@ -52,10 +68,24 @@
       "id": 1,
       "type": "stat",
       "title": "Request rate (req/s)",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
       "options": {
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "orientation": "horizontal",
         "textMode": "auto",
         "colorMode": "value",
@@ -65,13 +95,26 @@
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         }
       },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "loki"},
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "editorMode": "code",
           "expr": "sum(rate({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" [$__interval]))",
           "refId": "A"
@@ -82,11 +125,25 @@
       "id": 2,
       "type": "stat",
       "title": "Composite (avg)",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
-      "description": "Average CLEAR Composite score across all requests in the window. Healthy ≥75, Marginal 50-74, Failing <50.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "description": "Average CLEAR Composite score across all requests in the window. Healthy \u226575, Marginal 50-74, Failing <50.",
       "options": {
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "orientation": "horizontal",
         "textMode": "value",
         "colorMode": "value",
@@ -98,17 +155,34 @@
           "decimals": 0,
           "min": 0,
           "max": 100,
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [
-            {"color": "red", "value": null},
-            {"color": "yellow", "value": 50},
-            {"color": "green", "value": 75}
-          ]}
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 75
+              }
+            ]
+          }
         }
       },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "loki"},
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "editorMode": "code",
           "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_composite [$__range]))",
           "refId": "A"
@@ -119,11 +193,25 @@
       "id": 3,
       "type": "stat",
       "title": "Total cost (last range)",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
       "description": "Sum of total_cost_usd across all requests in the time window.",
       "options": {
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "orientation": "horizontal",
         "textMode": "auto",
         "colorMode": "value"
@@ -132,13 +220,26 @@
         "defaults": {
           "unit": "currencyUSD",
           "decimals": 4,
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         }
       },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "loki"},
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "editorMode": "code",
           "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap total_cost_usd [$__range]))",
           "refId": "A"
@@ -149,11 +250,25 @@
       "id": 4,
       "type": "stat",
       "title": "Assurance findings (range)",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
       "description": "Total Gatekeeper findings (inbound + outbound) over the window.",
       "options": {
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "orientation": "horizontal",
         "textMode": "auto",
         "colorMode": "value"
@@ -161,17 +276,34 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [
-            {"color": "green", "value": null},
-            {"color": "yellow", "value": 1},
-            {"color": "red", "value": 10}
-          ]}
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
         }
       },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "loki"},
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "editorMode": "code",
           "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap assurance_inbound_count [$__range])) + sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap assurance_outbound_count [$__range]))",
           "refId": "A"
@@ -182,9 +314,17 @@
       "id": 5,
       "type": "timeseries",
       "title": "CLEAR scores over time (avg per dimension)",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 4},
-      "description": "Average of each CLEAR dimension per time bucket. Healthy ≥75 green band, Failing <50 red band.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "description": "Average of each CLEAR dimension per time bucket. Healthy \u226575 green band, Failing <50 red band.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -197,38 +337,127 @@
             "showPoints": "auto",
             "spanNulls": true
           },
-          "thresholds": {"mode": "absolute", "steps": [
-            {"color": "red", "value": null},
-            {"color": "yellow", "value": 50},
-            {"color": "green", "value": 75}
-          ]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 75
+              }
+            ]
+          }
         }
       },
-      "options": {"legend": {"showLegend": true, "displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "targets": [
-        {"refId": "Composite",   "datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "legendFormat": "Composite",   "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_composite [$__interval]))"},
-        {"refId": "Cost",        "datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "legendFormat": "Cost",        "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_cost [$__interval]))"},
-        {"refId": "Latency",     "datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "legendFormat": "Latency",     "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_latency [$__interval]))"},
-        {"refId": "Efficacy",    "datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "legendFormat": "Efficacy",    "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_efficacy [$__interval]))"},
-        {"refId": "Assurance",   "datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "legendFormat": "Assurance",   "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_assurance [$__interval]))"},
-        {"refId": "Reliability", "datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "legendFormat": "Reliability", "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_reliability [$__interval]))"}
+        {
+          "refId": "Composite",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "legendFormat": "Composite",
+          "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_composite [$__interval]))"
+        },
+        {
+          "refId": "Cost",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "legendFormat": "Cost",
+          "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_cost [$__interval]))"
+        },
+        {
+          "refId": "Latency",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "legendFormat": "Latency",
+          "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_latency [$__interval]))"
+        },
+        {
+          "refId": "Efficacy",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "legendFormat": "Efficacy",
+          "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_efficacy [$__interval]))"
+        },
+        {
+          "refId": "Assurance",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "legendFormat": "Assurance",
+          "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_assurance [$__interval]))"
+        },
+        {
+          "refId": "Reliability",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "legendFormat": "Reliability",
+          "expr": "avg(avg_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap clear_reliability [$__interval]))"
+        }
       ]
     },
     {
       "id": 6,
       "type": "piechart",
       "title": "Status breakdown",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 9, "w": 8, "x": 0, "y": 13},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 13
+      },
       "description": "Request outcomes from the AIQG response event status field.",
       "options": {
         "pieType": "donut",
         "displayLabels": [],
-        "legend": {"showLegend": true, "placement": "bottom"}
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "loki"},
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "editorMode": "code",
           "expr": "sum by (status) (count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" [$__range]))",
           "refId": "A"
@@ -239,20 +468,42 @@
       "id": 7,
       "type": "timeseries",
       "title": "Token cost over time",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 9, "w": 8, "x": 8, "y": 13},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 13
+      },
       "description": "Sum of total_cost_usd per minute, by vendor.",
       "fieldConfig": {
         "defaults": {
           "unit": "currencyUSD",
           "decimals": 4,
-          "custom": {"drawStyle": "bars", "fillOpacity": 70, "stacking": {"mode": "normal"}}
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
         }
       },
-      "options": {"legend": {"showLegend": true, "placement": "bottom"}},
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        }
+      },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "loki"},
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "editorMode": "code",
           "expr": "sum by (vendor) (sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap total_cost_usd [$__interval]))",
           "refId": "A"
@@ -263,19 +514,39 @@
       "id": 8,
       "type": "timeseries",
       "title": "Tokens used over time",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 9, "w": 8, "x": 16, "y": 13},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 13
+      },
       "description": "Sum of total_tokens per minute, by model.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
         }
       },
-      "options": {"legend": {"showLegend": true, "placement": "bottom"}},
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        }
+      },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "loki"},
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "editorMode": "code",
           "expr": "sum by (model) (sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap total_tokens [$__interval]))",
           "refId": "A"
@@ -286,36 +557,87 @@
       "id": 9,
       "type": "timeseries",
       "title": "Assurance findings over time",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
       "description": "Per-minute count of Gatekeeper findings, by direction.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": {"drawStyle": "bars", "fillOpacity": 70, "stacking": {"mode": "normal"}}
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
         }
       },
-      "options": {"legend": {"showLegend": true, "placement": "bottom"}},
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        }
+      },
       "targets": [
-        {"refId": "Inbound",  "datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "legendFormat": "Inbound",  "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap assurance_inbound_count [$__interval]))"},
-        {"refId": "Outbound", "datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "legendFormat": "Outbound", "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap assurance_outbound_count [$__interval]))"}
+        {
+          "refId": "Inbound",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "legendFormat": "Inbound",
+          "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap assurance_inbound_count [$__interval]))"
+        },
+        {
+          "refId": "Outbound",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "legendFormat": "Outbound",
+          "expr": "sum(sum_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | unwrap assurance_outbound_count [$__interval]))"
+        }
       ]
     },
     {
       "id": 10,
       "type": "piechart",
       "title": "Worst-severity distribution",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
       "description": "Distribution of worst severity per request that surfaced any finding. Blank = clean scans.",
       "options": {
         "pieType": "pie",
         "displayLabels": [],
-        "legend": {"showLegend": true, "placement": "bottom"}
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "loki"},
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "editorMode": "code",
           "expr": "sum by (assurance_worst_severity) (count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" | assurance_worst_severity != \"\" [$__range]))",
           "refId": "A"
@@ -326,31 +648,438 @@
       "id": 11,
       "type": "table",
       "title": "Per-vendor/model summary",
-      "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 30},
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
       "description": "Request counts grouped by vendor + model for the time window. Requires vendor/model on response events (gateway aiqg-v5.19+).",
-      "options": {"showHeader": true, "cellHeight": "sm"},
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
       "fieldConfig": {
-        "defaults": {"custom": {"align": "auto", "minWidth": 60}},
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "minWidth": 60
+          }
+        },
         "overrides": [
-          {"matcher": {"id": "byName", "options": "Requests"}, "properties": [{"id": "custom.width", "value": 90}]}
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Requests"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          }
         ]
       },
       "transformations": [
-        {"id": "organize", "options": {
-          "excludeByName": {"Time": true},
-          "renameByName": {"Value": "Requests", "vendor": "Vendor", "model": "Model"}
-        }},
-        {"id": "sortBy", "options": {"fields": "", "sort": [{"field": "Requests", "desc": true}]}}
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "Requests",
+              "vendor": "Vendor",
+              "model": "Model"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": "",
+            "sort": [
+              {
+                "field": "Requests",
+                "desc": true
+              }
+            ]
+          }
+        }
       ],
       "targets": [
         {
-          "datasource": {"type": "loki", "uid": "loki"},
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "editorMode": "code",
           "expr": "sum by (vendor, model) (count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | vendor=~\"$vendor\" [$__range]))",
           "refId": "A",
           "format": "table",
           "instant": true
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "AIQG Semantic-Cache L3 Judge (budget & FPR)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Judge spend today (USD)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Judge tokens spent so far today; resets at UTC midnight.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 39
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.4
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "aiqg_semcache_judge_budget_spent_usd",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Budget remaining (USD)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Remaining judge budget for today (cap minus spend).",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 39
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.05
+              },
+              {
+                "color": "green",
+                "value": 0.1
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "aiqg_semcache_judge_budget_remaining_usd",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Budget skipped (last 15m)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Samples the judge skipped because the daily cap was reached. >0 means the cap is binding (matches the AIQGSemCacheJudgeBudgetExhausted alert).",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 39
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "increase(aiqg_semcache_judge_budget_skipped_total[15m])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Sampled false-hit rate",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Sampled FPR: judged-incorrect would-hits over graded would-hits (\u00a714 ground truth).",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 39
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.005
+              },
+              {
+                "color": "red",
+                "value": 0.02
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "aiqg_semcache_judge_false_hits_total / clamp_min(aiqg_semcache_judge_would_serve_total, 1)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Judge budget: spend vs cap, and skip rate",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Daily spend and cap (left), plus the rate of budget-skipped samples. A rising skip rate with spend pinned at the cap = the cap is binding.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Skipped samples/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "Spent",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": "Spent today (USD)",
+          "expr": "aiqg_semcache_judge_budget_spent_usd"
+        },
+        {
+          "refId": "Cap",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": "Daily cap (USD)",
+          "expr": "aiqg_semcache_judge_budget_cap_usd"
+        },
+        {
+          "refId": "Skip",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "legendFormat": "Skipped samples/s",
+          "expr": "rate(aiqg_semcache_judge_budget_skipped_total[5m])"
         }
       ]
     }
