@@ -8,6 +8,10 @@ metadata:
     component: cache
 spec:
   replicas: 1
+  # Recreate (not RollingUpdate): the data PVC is ReadWriteOnce, so the new pod
+  # cannot mount it until the old pod releases it — a rolling update would stall.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: redis-shared
@@ -19,7 +23,10 @@ spec:
     spec:
       containers:
       - name: redis
-        image: redis:7-alpine
+        # Redis 8 bundles the Query Engine (FT.*) into core — required for the
+        # AIQG semantic cache's vector index (C4). Command-compatible with 7 and
+        # reads 7's AOF, so all existing consumers keep working on the same PVC.
+        image: redis:8
         ports:
         - containerPort: 6379
           name: redis
