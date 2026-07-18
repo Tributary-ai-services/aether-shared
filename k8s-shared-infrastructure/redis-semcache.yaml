@@ -1,0 +1,71 @@
+# Dedicated Redis for the AIQG semantic response cache (C4).
+#
+# Separate from redis-shared on purpose: the semantic cache needs the RediSearch
+# FT.* query engine (vector FLAT + COSINE + TAG filter + per-key TTL), which the
+# official redis:8 image does NOT bundle — only redis-stack-server does. Keeping
+# it isolated means the vector index (and its memory/CPU) can't affect the shared
+# cache every TAS service depends on.
+#
+# In-memory only (a cache repopulates): the entrypoint loads the modules; the app
+# runs FT.CREATE idempotently on startup, so a restart just re-warms from traffic.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-semcache
+  namespace: tas-shared
+  labels:
+    app: redis-semcache
+    component: cache
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis-semcache
+  template:
+    metadata:
+      labels:
+        app: redis-semcache
+        component: cache
+    spec:
+      containers:
+      - name: redis
+        image: redis/redis-stack-server:latest
+        # Do NOT override command — the redis-stack entrypoint loads the modules.
+        # REDIS_ARGS tunes the server: pure in-memory (no RDB/AOF) for a cache.
+        env:
+        - name: REDIS_ARGS
+          value: "--save '' --appendonly no --maxmemory 512mb --maxmemory-policy allkeys-lru"
+        ports:
+        - containerPort: 6379
+          name: redis
+        # Resources omitted — BestEffort QoS until profiled (TAS K8s policy).
+        livenessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-semcache
+  namespace: tas-shared
+  labels:
+    app: redis-semcache
+    component: cache
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: redis
+  selector:
+    app: redis-semcache
