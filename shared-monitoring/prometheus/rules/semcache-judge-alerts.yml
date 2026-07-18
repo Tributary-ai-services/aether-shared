@@ -1,0 +1,38 @@
+groups:
+  - name: aiqg_semcache_judge
+    interval: 30s
+    rules:
+      # The daily judge $ cap (AIQG-SEMANTIC-CACHING.md §14.1) was reached and
+      # grading is paused until UTC midnight — samples are being skipped ungraded.
+      - alert: AIQGSemCacheJudgeBudgetExhausted
+        expr: increase(aiqg_semcache_judge_budget_skipped_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: tas-llm-router
+          component: aiqg-semcache-judge
+        annotations:
+          summary: "AIQG semantic-cache L3 judge hit its daily spend cap"
+          description: >
+            The L3 judge skipped {{ $value | printf "%.0f" }} sample(s) in the last 15m
+            because the daily USD cap was reached (see aiqg_semcache_judge_budget_cap_usd).
+            Grading is paused until UTC midnight. If unexpected, raise
+            AIQG_SEMCACHE_JUDGE_DAILY_USD or lower AIQG_SEMCACHE_JUDGE_SAMPLE_RATE.
+
+      # Early warning: today's spend crossed 80% of the cap (skip when unlimited).
+      - alert: AIQGSemCacheJudgeBudgetNearCap
+        expr: >
+          aiqg_semcache_judge_budget_cap_usd > 0
+          and
+          (aiqg_semcache_judge_budget_spent_usd / aiqg_semcache_judge_budget_cap_usd) >= 0.8
+        for: 5m
+        labels:
+          severity: info
+          service: tas-llm-router
+          component: aiqg-semcache-judge
+        annotations:
+          summary: "AIQG L3 judge daily spend at {{ $value | humanizePercentage }} of cap"
+          description: >
+            Today's judge spend (aiqg_semcache_judge_budget_spent_usd) is at least 80%
+            of the daily cap. It will stop grading when the cap is reached and resume at
+            UTC midnight.

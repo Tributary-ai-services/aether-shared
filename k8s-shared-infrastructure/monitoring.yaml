@@ -52,6 +52,11 @@ spec:
         volumeMounts:
         - name: prometheus-config
           mountPath: /etc/prometheus
+        # Alert rules live in their own ConfigMap mounted at the rules dir the
+        # prometheus.yml rule_files glob (/etc/prometheus/rules/*.yml) reads.
+        # Without this mount that glob matched nothing and no alerts loaded.
+        - name: prometheus-rules
+          mountPath: /etc/prometheus/rules
         - name: prometheus-data
           mountPath: /prometheus
         livenessProbe:
@@ -70,6 +75,9 @@ spec:
       - name: prometheus-config
         configMap:
           name: prometheus-shared-config
+      - name: prometheus-rules
+        configMap:
+          name: prometheus-shared-rules
       - name: prometheus-data
         persistentVolumeClaim:
           claimName: prometheus-shared-pvc
@@ -318,6 +326,60 @@ data:
           target_label: service
         - source_labels: [__meta_kubernetes_namespace]
           target_label: namespace
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-shared-rules
+  namespace: tas-shared
+  labels:
+    app: prometheus-shared
+    component: alert-rules
+data:
+  # Alerting rules loaded via prometheus.yml rule_files (/etc/prometheus/rules/*.yml).
+  # Alertmanager (alertmanager-shared:9093) routes what fires.
+  semcache-judge-alerts.yml: |
+    groups:
+      - name: aiqg_semcache_judge
+        interval: 30s
+        rules:
+          # The daily judge $ cap (§14.1) was reached and grading is paused until
+          # UTC midnight — samples are being skipped ungraded. This is the alert
+          # requested for "budget got hit".
+          - alert: AIQGSemCacheJudgeBudgetExhausted
+            expr: increase(aiqg_semcache_judge_budget_skipped_total[15m]) > 0
+            for: 0m
+            labels:
+              severity: warning
+              service: tas-llm-router
+              component: aiqg-semcache-judge
+            annotations:
+              summary: "AIQG semantic-cache L3 judge hit its daily spend cap"
+              description: >
+                The L3 judge skipped {{ $value | printf "%.0f" }} sample(s) in the last 15m
+                because the daily USD cap was reached (see aiqg_semcache_judge_budget_cap_usd).
+                Grading is paused until UTC midnight. If unexpected, raise
+                AIQG_SEMCACHE_JUDGE_DAILY_USD or lower AIQG_SEMCACHE_JUDGE_SAMPLE_RATE.
+
+          # Early warning: today's spend has crossed 80% of the cap (skip when the
+          # cap is unlimited / 0).
+          - alert: AIQGSemCacheJudgeBudgetNearCap
+            expr: >
+              aiqg_semcache_judge_budget_cap_usd > 0
+              and
+              (aiqg_semcache_judge_budget_spent_usd / aiqg_semcache_judge_budget_cap_usd) >= 0.8
+            for: 5m
+            labels:
+              severity: info
+              service: tas-llm-router
+              component: aiqg-semcache-judge
+            annotations:
+              summary: "AIQG L3 judge daily spend at {{ $value | humanizePercentage }} of cap"
+              description: >
+                Today's judge spend (aiqg_semcache_judge_budget_spent_usd) is at least 80%
+                of the daily cap. It will stop grading when the cap is reached and resume at
+                UTC midnight.
 
 ---
 # OpenTelemetry Collector Deployment
