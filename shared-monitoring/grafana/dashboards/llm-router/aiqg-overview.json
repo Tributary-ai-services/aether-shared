@@ -28,7 +28,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "30s",
   "time": {
     "from": "now-1h",
@@ -60,6 +60,46 @@
           "text": "All",
           "value": "$__all"
         }
+      },
+      {
+        "name": "topdim",
+        "label": "Top-N dimension",
+        "type": "custom",
+        "query": "workflow,model,source_app,vendor,agent_name",
+        "current": {
+          "text": "workflow",
+          "value": "workflow"
+        },
+        "options": [
+          {
+            "text": "workflow",
+            "value": "workflow",
+            "selected": true
+          },
+          {
+            "text": "model",
+            "value": "model",
+            "selected": false
+          },
+          {
+            "text": "source_app",
+            "value": "source_app",
+            "selected": false
+          },
+          {
+            "text": "vendor",
+            "value": "vendor",
+            "selected": false
+          },
+          {
+            "text": "agent_name",
+            "value": "agent_name",
+            "selected": false
+          }
+        ],
+        "includeAll": false,
+        "multi": false,
+        "hide": 0
       }
     ]
   },
@@ -1080,6 +1120,115 @@
           "editorMode": "code",
           "legendFormat": "Skipped samples/s",
           "expr": "rate(aiqg_semcache_judge_budget_skipped_total[5m])"
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "row",
+      "title": "Caching \u2014 Top misses (what to cache next)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      }
+    },
+    {
+      "id": 27,
+      "type": "table",
+      "title": "Top misses by $topdim \u2014 $ spent on cache misses",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pg-tas-events"
+      },
+      "description": "The CDN top-URLs analog: the $topdim buckets spending the most on cache MISSES \u2014 high spend + low hit rate = cache these next. Set the tenant textbox to scope; blank = all tenants.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Spent on misses $",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Spent on misses $"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.001
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.01
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Hit rate %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pg-tas-events"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  COALESCE(NULLIF($topdim,''),'(none)') AS \"Key\",\n  count(*) FILTER (WHERE raw->'data'->>'cache_state' = 'miss') AS \"Misses\",\n  round((count(*) FILTER (WHERE raw->'data'->>'cache_state' IN ('hit','semantic_hit'))::numeric\n    / NULLIF(count(*) FILTER (WHERE raw->'data'->>'cache_state' IN ('hit','semantic_hit','miss')),0)) * 100, 1) AS \"Hit rate %\",\n  round(COALESCE(sum(total_cost_usd) FILTER (WHERE raw->'data'->>'cache_state' = 'miss'),0)::numeric, 6) AS \"Spent on misses $\"\nFROM aiqg.event_metrics\nWHERE $__timeFilter(time)\n  AND ('$tenant' = '' OR tenant_id::text = '$tenant')\nGROUP BY 1\nORDER BY \"Spent on misses $\" DESC NULLS LAST\nLIMIT 15",
+          "editorMode": "code"
         }
       ]
     }

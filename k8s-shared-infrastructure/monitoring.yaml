@@ -771,7 +771,29 @@ data:
           timescaledb: false
         isDefault: false
         editable: true
-  
+      # AIQG event stream (gateway-written hypertable). Backs the caching /
+      # top-misses panels — reads aiqg.event_metrics on the TimescaleDB instance.
+      - name: TimescaleDB-Events
+        type: postgres
+        uid: pg-tas-events
+        orgId: 1
+        version: 1
+        access: proxy
+        url: timescaledb-shared.tas-shared.svc.cluster.local:5432
+        database: tas_events
+        user: tas_events_rw
+        secureJsonData:
+          password: taseventspass
+        jsonData:
+          sslmode: disable
+          maxOpenConns: 5
+          maxIdleConns: 2
+          connMaxLifetime: 14400
+          postgresVersion: 1500
+          timescaledb: true
+        isDefault: false
+        editable: true
+
   dashboards.yml: |
     apiVersion: 1
     providers:
