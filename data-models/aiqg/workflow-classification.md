@@ -168,7 +168,7 @@ The YAML rule pack emits, per request, a structured object that lands in [[infer
 |---|---|---|
 | `workflow_type` | enum string | One of the 7 enum values defined above |
 | `workflow_classification_confidence` | float (0.0–1.0) | Max of matched signal scores |
-| `workflow_classification_source` | enum | `gateway_heuristic` \| `customer_override_header` \| `customer_account_default` |
+| `workflow_classification_source` | enum | `gateway_heuristic` \| `customer_override_header` \| `otel_declared` \| `customer_account_default` |
 | `workflow_classification_matched_signals` | string[] | Debug trail — which named rule patterns fired |
 
 ---
@@ -181,7 +181,7 @@ Per-request classifier output fields, as written to [[inferred-labels]]:
 |---|---|---|---|---|
 | `workflow_type` | enum string | Yes | One of `single_turn_qa`, `rag`, `agentic`, `summarization`, `code_generation`, `classification_extraction`, `unknown` | `"rag"` |
 | `workflow_classification_confidence` | float | Yes | Max of matched-rule confidences in [0.0, 1.0]; for customer overrides, set to `1.0` | `0.87` |
-| `workflow_classification_source` | enum | Yes | `gateway_heuristic` \| `customer_override_header` \| `customer_account_default` | `"gateway_heuristic"` |
+| `workflow_classification_source` | enum | Yes | `gateway_heuristic` \| `customer_override_header` \| `otel_declared` \| `customer_account_default` | `"gateway_heuristic"` |
 | `workflow_classification_matched_signals` | string[] | Optional (omitted for overrides) | Names of rule patterns that fired, in the form `<workflow_type>.<signal_name>` | `["rag.context_block_delimiter_xml"]` |
 | `workflow_classification_version` | string | Yes | Version of `aiqg_workflows.yaml` that produced the decision | `"1.0.0"` |
 
@@ -210,9 +210,15 @@ The classifier output MUST satisfy:
    - `workflow_classification_confidence = 1.0`
    - `workflow_classification_source = "customer_override_header"`
    - `workflow_classification_matched_signals` is omitted (null)
-4. **Invalid override → log + fall through.** If the `TAS-Workflow` header value is not in the enum, log a warning, drop the override, and fall through to heuristic classification. Tag the event with `workflow:override_invalid` for visibility.
-5. **`workflow_classification_version` MUST always be set** (the rule-pack version) — required for reproducibility of historical aggregates.
-6. **No-match guarantee.** Even if zero rules match, the classifier emits `unknown` with `confidence = 0.0` and empty `matched_signals`. There is no nullable case.
+4. **OTel-declared beats heuristic, loses to customer override.** If no valid `TAS-Workflow` override is present but the request carries `gen_ai.operation.name` (see [[otel-genai-ingestion]]) that maps to a workflow type (`invoke_agent`/`execute_tool`/`create_agent` → `agentic`), set:
+   - `workflow_type = <mapped type>`
+   - `workflow_classification_confidence = 1.0`
+   - `workflow_classification_source = "otel_declared"`
+
+   Op-names that fall through (`chat`/`text_completion`/`generate_content`/unknown) or are excluded (`embeddings`) do **not** set a declared type — fall through to heuristic. The raw op-name and the heuristic result are still recorded for classification drift ([[classification-drift]]). Precedence: `customer_override_header` > `otel_declared` > `gateway_heuristic`.
+5. **Invalid override → log + fall through.** If the `TAS-Workflow` header value is not in the enum, log a warning, drop the override, and fall through to (OTel-declared, then heuristic) classification. Tag the event with `workflow:override_invalid` for visibility.
+6. **`workflow_classification_version` MUST always be set** (the rule-pack version) — required for reproducibility of historical aggregates.
+7. **No-match guarantee.** Even if zero rules match, the classifier emits `unknown` with `confidence = 0.0` and empty `matched_signals`. There is no nullable case.
 
 ---
 
@@ -592,6 +598,8 @@ Never. Always deprecate-but-accept:
 - [[route-rule]] — Phase 2 policy matcher on `workflow_type`
 - [[account]] — Phase 2 storage of account-level `workflow_classification_override`
 - [[response-event]] — paired event for response-side enrichment
+- [[otel-genai-ingestion]] — OTel `gen_ai.*` as a declared classification source (adds the `otel_declared` source + precedence rung)
+- [[classification-drift]] — declared-vs-inferred drift built on this taxonomy
 - `source-spec-v0.2.md` §3.9 — the canonical six-type spec
 - `source-spec-v0.2.md` §3.6 — `TAS-Workflow` request header definition
 - `source-spec-v0.2.md` §3.10 — "match once, tag many" architecture
@@ -624,4 +632,5 @@ Never. Always deprecate-but-accept:
 
 ## Changelog
 
+- **v1.1.0 — 2026-08-03** — add `otel_declared` classification source + precedence rung (`customer_override_header` > `otel_declared` > `gateway_heuristic`); Validation Rule 4 (OTel-declared mapping) inserted; cross-links to [[otel-genai-ingestion]] + [[classification-drift]] (Plan #8 Phase 0) — TAS Platform
 - **v1.0.0 — 2026-05-31** — initial spec draft — TAS Platform
