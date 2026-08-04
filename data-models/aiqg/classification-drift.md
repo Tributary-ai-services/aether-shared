@@ -91,15 +91,29 @@ Rollup counters (per scope/window) the dashboard reads: `classification_drift_co
 
 ## 5. Axis-2 baseline & detection (Phase 3)
 
-For each **stable declared identity** (declared agent id, or a pinned principal), maintain a rolling baseline of the **inferred** distributions:
+**Decisions locked 2026-08-03 (with John):** baseline stored in a **TS rollup table** (`aiqg.identity_baseline`); detection by a **dashboard-be poll worker** (the scalable per-event aggregation already lives in Spark→`event_metrics`/TS; the worker only reads rolled-up distributions per identity, compares vs baseline, and alerts — cost scales with #identities × poll interval, not event volume); **full Axis-2** (all three signals).
 
-- **fingerprint version lineage** — MinHash similarity of the request-shape fingerprint vs the identity's established fingerprint; a threshold break = a new agent version (or impersonation).
-- **flow/step-topology histogram** — distribution of `flow_step_seq` / step counts.
-- **`workflow_type` mix** — the inferred-type histogram.
+### 5.1 What "stable declared identity" means
 
-A dashboard-be worker (mirroring the shipped `autostop.go` / reduction auto-rollback worker) computes rolling drift vs baseline and emits drift events; a new **`classification_drift`** alert kind lands in Governance ▸ Alerts. **REC (open):** store the baseline in the TS rollup rather than a new table, to match the shipped agent/flow rollup path — confirm when Phase 3 starts.
+An identity is keyed by `(tenant_id, agent_declared)` — i.e. a declared agent id (OTel `gen_ai.agent.id` or `TAS-Agent-Id`). Only events carrying a declared agent participate; unattributed traffic has no stable key to baseline against.
 
-**FTO note:** the deterministic MinHash version-lineage is FTO-clear; do NOT pull in CDC content-propagation lineage without sign-off (see `project_aiqg_agent_flow.md`).
+### 5.2 The three inferred signals (per identity, per window)
+
+1. **`workflow_type` mix** — the histogram of *inferred* (`workflow_inferred`) types the identity produced. Drift = the current window's mix diverges from the baseline mix.
+2. **flow/step-topology** — the histogram of `flow_step_seq` (bucketed step counts) the identity's requests exhibited. Drift = topology shape moved.
+3. **fingerprint version-lineage** — the set of distinct inferred `agent_surrogate_id`s (the deterministic per-(tenant,principal) request-shape fingerprints) the identity resolved to. A **new** surrogate appearing (below a MinHash/Jaccard similarity threshold vs the baseline set) = a new agent version, or impersonation. **FTO:** deterministic MinHash/Jaccard lineage only — do NOT pull in CDC content-propagation lineage without sign-off (see `project_aiqg_agent_flow.md`).
+
+### 5.3 Divergence math
+
+Histogram signals (1, 2) use **Jensen–Shannon divergence** (symmetric, bounded [0,1], well-defined when a category is absent on one side — unlike KL). Lineage (3) uses **Jaccard distance** of the surrogate sets (`1 − |A∩B|/|A∪B|`). Each signal has a configurable trip threshold; a signal only counts once both baseline and current windows clear a `min_samples` floor (avoid noise on thin traffic).
+
+### 5.4 Baseline table (`aiqg.identity_baseline`, TS)
+
+Per `(tenant_id, agent_declared)`: JSONB `workflow_mix` + `flow_topology` histograms, `surrogate_set` (text[]), `sample_count`, `baseline_start`/`baseline_end`, `updated_at`. The worker seeds a baseline the first time it sees an identity with ≥`min_samples`, then EWMA-updates it on each tick when no drift trips (so the baseline tracks slow legitimate change but a sudden break still trips). A tripped signal does NOT fold into the baseline (so the anomaly stays visible next tick).
+
+### 5.5 Worker (dashboard-be `internal/classdrift`)
+
+Mirrors `internal/reduction/autorollback.go`: `Worker.Run(ctx)` on a ticker (default 5min, floored 60s); each tick lists declared identities active in the window, reads current distributions from `event_metrics`, loads the baseline, computes the three divergences, and — on a trip — records a drift event and (if a subscription exists) raises the **`classification_drift`** alert kind. Pure trip decision (`driftReasons(current, baseline)`) extracted for unit testing, exactly like `rollbackReason`.
 
 ---
 
