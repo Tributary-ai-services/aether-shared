@@ -1,0 +1,149 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "id": null,
+  "uid": "aiqg-classification-drift",
+  "title": "TAS — AIQG Classification & Attribution Drift (Plan #8)",
+  "description": "Declared-vs-inferred drift. Axis-1 (per-event): workflow + attribution drift rate, Loki-backed (drift fields promoted onto the aiqg response event). Axis-2 (temporal): per-identity baseline breaks recorded by the classdrift worker, from aiqg.identity_drift_event (TimescaleDB). DISTINCT from the headline-metric drift dashboard.",
+  "tags": ["aiqg", "drift", "classification"],
+  "timezone": "",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "type": "textbox",
+        "label": "Tenant id",
+        "description": "Filter by tenant_id. Empty = all tenants.",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Axis-1 — cross-source disagreement (per-event, Loki)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Workflow drift rate (declared vs inferred)",
+      "description": "Fraction of events carrying a declared workflow whose declared type disagrees with the heuristic. workflow_drift / workflow_declared.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "color": { "mode": "fixed", "fixedColor": "orange" } } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "refId": "A", "legendFormat": "workflow drift rate", "expr": "sum(count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | workflow_drift=\"true\" [$__interval])) / sum(count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | workflow_declared!=\"\" [$__interval]))" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Attribution drift rate (declared agent vs inferred)",
+      "description": "Fraction of events carrying a declared agent flagged as cross-source attribution drift. agent_drift / agent_declared.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "color": { "mode": "fixed", "fixedColor": "red" } } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "refId": "A", "legendFormat": "attribution drift rate", "expr": "sum(count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | agent_drift=\"true\" [$__interval])) / sum(count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | agent_declared!=\"\" [$__interval]))" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Declared events (range)",
+      "description": "Events carrying a declared workflow signal — the drift-rate denominator.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 9 },
+      "options": { "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "refId": "A", "expr": "sum(count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | workflow_declared!=\"\" [$__interval]))" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Workflow drift events (range)",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 9 },
+      "options": { "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "orange" } } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "refId": "A", "expr": "sum(count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | workflow_drift=\"true\" [$__interval]))" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Attribution drift events (range)",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 9 },
+      "options": { "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "red" } } },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "loki" }, "editorMode": "code", "refId": "A", "expr": "sum(count_over_time({namespace=\"tas-llm-router\"} |= \"aiqg response event\" | json | tenant_id=~\"$tenant\" | agent_drift=\"true\" [$__interval]))" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Axis-2 — temporal / behavioral drift (per-identity baseline breaks, TimescaleDB)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Identity baseline breaks over time",
+      "description": "Axis-2 drift breaks recorded by the classdrift worker, bucketed. A rising line = more stable declared identities breaking from their inferred baseline (version churn / impersonation / classifier miscalibration).",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "pg-tas-events" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } } },
+      "targets": [
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "pg-tas-events" }, "format": "time_series", "rawQuery": true, "refId": "A", "rawSql": "SELECT time_bucket('$__interval', time) AS time, signal AS metric, count(*) AS breaks FROM aiqg.identity_drift_event WHERE $__timeFilter(time) AND ('$tenant' = '' OR tenant_id = '$tenant') GROUP BY 1, 2 ORDER BY 1" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "piechart",
+      "title": "Breaks by signal (range)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "pg-tas-events" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["value"] }, "reduceOptions": { "calcs": ["lastNotNull"], "values": true } },
+      "targets": [
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "pg-tas-events" }, "format": "table", "rawQuery": true, "refId": "A", "rawSql": "SELECT signal AS \"Signal\", count(*) AS \"Breaks\" FROM aiqg.identity_drift_event WHERE $__timeFilter(time) AND ('$tenant' = '' OR tenant_id = '$tenant') GROUP BY 1 ORDER BY 2 DESC" }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Top drifting identities (range)",
+      "description": "Declared identities with the most Axis-2 breaks. A fingerprint_lineage break = a new agent version or impersonation.",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "pg-tas-events" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 22 },
+      "targets": [
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "pg-tas-events" }, "format": "table", "rawQuery": true, "refId": "A", "rawSql": "SELECT agent_declared AS \"Agent\", count(*) AS \"Breaks\", count(*) FILTER (WHERE signal = 'fingerprint_lineage') AS \"Lineage breaks\", round(max(divergence)::numeric, 3) AS \"Max divergence\", max(time) AS \"Last break\" FROM aiqg.identity_drift_event WHERE $__timeFilter(time) AND ('$tenant' = '' OR tenant_id = '$tenant') GROUP BY 1 ORDER BY 2 DESC LIMIT 20" }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Recent breaks",
+      "description": "Newest Axis-2 identity drift breaks with the tripped signal + divergence.",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "pg-tas-events" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 22 },
+      "targets": [
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "pg-tas-events" }, "format": "table", "rawQuery": true, "refId": "A", "rawSql": "SELECT time AS \"Time\", agent_declared AS \"Agent\", signal AS \"Signal\", round(divergence::numeric, 3) AS \"Divergence\", round(threshold::numeric, 2) AS \"Threshold\", sample_count AS \"Samples\", detail AS \"Detail\" FROM aiqg.identity_drift_event WHERE $__timeFilter(time) AND ('$tenant' = '' OR tenant_id = '$tenant') ORDER BY time DESC LIMIT 100" }
+      ]
+    }
+  ]
+}
