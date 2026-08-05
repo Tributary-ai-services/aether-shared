@@ -23,9 +23,21 @@ plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #14
 
 Let an AIQG customer **bring their own LLM provider API keys** (OpenAI, Anthropic, …), store them securely in AIQG, and have the gateway inject the right key per request — instead of passing a vendor key on every request (today's Path A requirement) or relying on TAS's pre-configured keys.
 
-### ⚠ The load-bearing reversal
+### The promise, refined: **"we never hold your keys — unless you bring your own"**
 
-TAS's current stance is **"we never hold your keys"**: Path A (`internal/middleware/aiqg.go`) *requires* the customer to send `Authorization: Bearer <vendor-key>` on every request, and the gateway never stores it. This feature **deliberately reverses that** — AIQG now holds vendor keys (encrypted). That is a product + security decision, made knowingly. The design's job is to make holding them as safe as possible and to keep the *option* of per-request keys (never-store) open.
+This is NOT a reversal of "we never hold your keys." It's an **explicit, opt-in exception** that keeps the promise intact for everyone who doesn't ask for it:
+
+- **Default posture = never hold.** With no stored credential, TAS holds nothing: the customer either passes a vendor key per-request (`Authorization` / `TAS-Upstream-Authorization`, ephemeral, never persisted) or uses TAS's shared key. This is the recommended path and stays first-class.
+- **Storing is a deliberate customer act.** "Bring your own" means the customer *chooses* to hand AIQG a key to hold, with a clear acknowledgment of what that means and how it's protected (§6). Until they do, the strict promise holds for them verbatim.
+- **The promise is per-account, provable.** For any account that never stores a key, "we never hold your keys" is literally true and enforceable — an account can even **hard-disable** stored credentials (`stored_credentials_enabled = false`, §2) so no admin can accidentally opt them in.
+
+So the design keeps three postures, in precedence order: **per-request key (never-hold, ephemeral) → stored key (opt-in, encrypted, "you brought your own") → TAS shared key (fallback, if allowed)**. The refined tagline is the product's north star and the UI copy (§8).
+
+### Where the promise stays literally true: the data path never persists keys
+
+Crucially, **"we never hold your keys" remains literally true for the request router and the Gatekeeper scanning path** — the parts that actually see your prompts and content. tas-llm-router **never persists a vendor key**: it holds one only transiently in memory for the duration of a single request to inject it upstream (exactly as any proxy forwards an `Authorization` header), then it's gone. Gatekeeper (inbound/outbound scanning, DLP, CLEAR) never touches the key at all.
+
+BYOK storage lives entirely in the **control plane** — the aiqg-dashboard-be vault — which is a distinct service, trust boundary, and code path from the router/scanner. So the sensitive *data path* is stateless with respect to keys by construction; the only thing that stores a key is the vault, and only for a customer who explicitly brought their own. This is why the promise holds: **the router that reads your traffic still never holds your key; the vault only holds what you deliberately handed it, encrypted.** (This also motivates the §6 hardening where the gateway fetches the *wrapped* blob and decrypts in-process, so even the plaintext never crosses the control-plane→data-path wire.)
 
 ### Decisions locked (2026-08-04, with John)
 
@@ -74,14 +86,17 @@ One enabled credential per `(account, provider)` is resolved by default; multipl
 
 ```sql
 CREATE TABLE IF NOT EXISTS aiqg.tenant_credential_policy (
-    tenant_id            UUID PRIMARY KEY,
-    allow_shared_fallback BOOLEAN NOT NULL DEFAULT TRUE,  -- false = BYOK-only
-    updated_by           TEXT NOT NULL DEFAULT '',
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    tenant_id                 UUID PRIMARY KEY,
+    allow_shared_fallback     BOOLEAN NOT NULL DEFAULT TRUE,  -- false = BYOK-only
+    stored_credentials_enabled BOOLEAN NOT NULL DEFAULT TRUE, -- false = strict never-hold: the store API refuses to persist any key
+    consented_at              TIMESTAMPTZ,                    -- when an admin first opted this account into storage
+    consented_by              TEXT,                          -- keycloak sub who acknowledged
+    updated_by                TEXT NOT NULL DEFAULT '',
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
 
-Absent row = default (`allow_shared_fallback = true`).
+Absent row = default (`allow_shared_fallback = true`, `stored_credentials_enabled = true`, no consent yet). **`stored_credentials_enabled = false`** enforces the strict promise — the create/rotate API refuses to persist a key (409/403), so an account can *prove* "AIQG holds nothing of ours" and no admin can accidentally opt them in. **Consent gate**: the first successful `POST /account/credentials` for an account requires an explicit acknowledgment (§8) and stamps `consented_at`/`consented_by` (audited) — storing a key is a recorded, deliberate act, never a silent default.
 
 ---
 
@@ -158,6 +173,9 @@ The resolved key is set as the upstream `Authorization` before the provider call
 
 ## 6. Security considerations
 
+- **Data path is stateless re: keys** — the request router holds a key only transiently in-memory per request; Gatekeeper scanning never touches it. The vault (dashboard-be) is the *only* store, and only for opt-in keys. This is the structural basis of "we never hold your keys — unless you bring your own."
+- **Strict opt-out** — `stored_credentials_enabled = false` makes the store API refuse to persist any key, so an account can enforce/prove the strict promise; no admin can silently opt them in.
+- **Explicit consent** — first store per account requires an acknowledgment, stamped + audited (`consented_at`/`consented_by`). Holding a key is never a default; it's a recorded choice.
 - **Blast radius** — per-credential DEKs; KEK compromise ≠ instant plaintext (still need the DB). KEK lives in a k8s secret (cluster-scoped); document rotation. KMS/Vault is the v2 hardening (§3).
 - **Plaintext over in-cluster HTTP** (the `/internal/resolve` response) — protected today by `Internal-Auth` + NetworkPolicy (same trust boundary as token validation). Hardening: mTLS between gateway↔dashboard-be; or have the gateway hold the KEK and fetch only the wrapped blob (moves decrypt into the gateway — larger change, keeps plaintext off the wire). Note both; v1 = Internal-Auth + NetworkPolicy.
 - **Masking** — only `provider` + `key_last4` ever leave the store to the UI. No GET-by-id-returns-plaintext route exists.
@@ -175,14 +193,16 @@ Add to the response event (additive, `omitempty`): `credential_source` enum `ups
 
 ## 8. UI (aiqg-ui)
 
-New **Settings ▸ Provider Credentials** tab (distinct from **API Tokens**): per-provider add (masked-on-save), rotate, enable/disable, delete; `key_last4` + "last used"; a **Test** button; and the account's **BYOK-only** toggle (`allow_shared_fallback`). Copy makes the reversal explicit ("keys are encrypted at rest; TAS decrypts them only to call the provider on your behalf").
+New **Settings ▸ Provider Credentials** tab (distinct from **API Tokens**): per-provider add (masked-on-save), rotate, enable/disable, delete; `key_last4` + "last used"; a **Test** button; the account's **BYOK-only** toggle (`allow_shared_fallback`); and a **"Don't store any keys"** strict toggle (`stored_credentials_enabled = false`).
+
+Copy leads with the refined promise: **"We never hold your keys — unless you bring your own."** The tab explains the three postures (per-request ephemeral, stored opt-in, TAS shared) and states plainly that the request router + scanning never persist keys — only this vault does, only for keys you deliberately store, encrypted. The **first** stored key per account shows a one-time **consent acknowledgment** ("You're choosing to have AIQG hold this key. It's encrypted at rest and decrypted only in-memory to call the provider on your behalf. The router and Gatekeeper scanning never persist it.") — required to proceed, stamped to `consented_at`/`consented_by` + audit.
 
 ---
 
 ## 9. Phasing
 
 - **Phase 0 — this spec** + `aiqg.provider_credential` / `tenant_credential_policy` data-model docs.
-- **Phase 1 — store + crypto (dashboard-be)**: envelope crypto helper, `provider_credential` store, migration 018, authed CRUD + `/test`, audit. KEK config + k8s secret. (No gateway change yet — keys storable but unused.)
+- **Phase 1 — store + crypto (dashboard-be)**: envelope crypto helper, `provider_credential` + `tenant_credential_policy` stores, migration 018, authed CRUD + `/test`, the **first-store consent gate** (stamp `consented_at`/`consented_by`) and **`stored_credentials_enabled=false` strict enforcement** (store refuses to persist), audit. KEK config + k8s secret. (No gateway change yet — keys storable but unused.)
 - **Phase 2 — resolve + inject (gateway)**: `/internal/credentials/resolve`; `pkg/aiqg/credentials` resolver; relax the auth gate; effective-key precedence + injection at `server.go:945`; `credential_source`/`credential_id` on the event; fallback toggle honored.
 - **Phase 3 — UI**: Provider Credentials tab + BYOK-only toggle + test button; attribution surfacing (your-keys vs TAS-keys).
 - **Phase 4 — hardening (optional)**: KMS/Vault KEK backend; mTLS gateway↔dashboard-be; per-user override (needs the Keycloak↔gateway user_id mapping).
