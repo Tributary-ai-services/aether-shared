@@ -1,0 +1,35 @@
+# CoreDNS split-horizon overlay for *.tas.scharber.com
+# ======================================================
+# WHY: internal service-to-service traffic to the public hostnames
+# (keycloak.tas.scharber.com, api.aiqg.tas.scharber.com, registry-api...) used
+# to resolve via PUBLIC DNS to the MetalLB LoadBalancer IP and hairpin back
+# through the external ingress. Both the LB IP and the public A-record are
+# SUBNET-SPECIFIC, so every time the (travelling) k3s node changes networks,
+# internal calls broke with connection-refused until MetalLB + public DNS were
+# realigned to the new subnet — a recurring outage window.
+#
+# FIX: resolve *.tas.scharber.com IN-CLUSTER to the ingress-nginx ClusterIP
+# (a 10.43.x address, independent of node subnet / MetalLB / public DNS). The
+# Host header is preserved so the nginx Ingress rules still match, and TLS
+# still validates (ingress serves the tas-ca-issuer cert; pods trust that CA).
+# `answer auto` restores the queried name in the response.
+#
+# k3s CoreDNS imports `/etc/coredns/custom/*.override` into the `.:53` block and
+# mounts the `coredns-custom` ConfigMap at /etc/coredns/custom, so this needs no
+# change to the k3s-managed Corefile. The `reload` plugin validates before
+# swapping — a syntax error keeps the old config rather than breaking DNS.
+#
+# External/browser access to *.tas.scharber.com still uses public DNS -> the
+# MetalLB LB IP, which the /k3s-reconnect skill realigns on each network move.
+# This overlay only changes IN-CLUSTER resolution.
+#
+# Applied 2026-08-13. Verified: names -> 10.43.138.39 (ingress ClusterIP),
+# 200 OK; normal cluster + external DNS unaffected.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  tas-scharber-split-horizon.override: |
+    rewrite name regex (.*)\.tas\.scharber\.com\.$ ingress-nginx-controller.ingress-nginx.svc.cluster.local answer auto
