@@ -1,0 +1,133 @@
+# TEI (HuggingFace text-embeddings-inference) — embeddings backend for the
+# AIQG C4 semantic cache.
+#
+# Serves redis/langcache-embed-v3-small: Apache-2.0, 384-dim, 22.6M params,
+# 128 max sequence. Chosen in docs/AIQG-SEMANTIC-CACHING.md §6 because it is
+# purpose-trained for CACHE MATCHING (ArcFaceInBatchLoss, ~8M pairs) with
+# negation in its eval set — the canonical false-hit mode. The general-purpose
+# retrieval encoders are the root cause, not the cure: measured on a 31-pair
+# labeled set (tas-llm-router pkg/aiqg/semcache/calibrate_live_test.go), both
+# all-minilm and nomic-embed-text leave the match/near-miss classes
+# INTERLEAVED (separation -0.33 and -0.12 respectively), and nomic bought
+# nothing at FPR=0 despite being 2x the dimensionality.
+#
+# 384 dims is deliberate: same as the all-minilm already deployed, so the
+# RediSearch FLAT index needs no rebuild.
+#
+# ⚠️ Same dimensionality is also the hazard. The semantic-cache key and scope
+# (tenant/model/scoring_version) do NOT identify the EMBEDDER, so Redis will
+# happily compare all-minilm vectors against langcache vectors and return
+# meaningless similarities. Cutover must flush aiqg:scache:* (and ideally add
+# embedder identity to the scope). Deploying this file is safe on its own —
+# nothing reads it until the gateway's AIQG_SEMCACHE_EMBED_PROVIDER is
+# switched to "tei".
+#
+# Why TEI rather than reusing Ollama: Ollama cannot serve this model at all
+# (not GGUF / llama.cpp-compatible — verified), its readiness probe (`GET /`)
+# passes with no model loaded, and it has no model-pull step. TEI has a real
+# /health that only passes once the model is resident, and keeps the model
+# swappable without a router rebuild.
+#
+# QoS: unlike the other tas-shared workloads this sits in the REQUEST PATH of
+# the gateway, so it takes the CLAUDE.md "services that must survive node
+# pressure" exception rather than the BestEffort default. Requests are
+# deliberately modest (22.6M params) — profile and re-tune; see the policy's
+# profiling workflow. The gateway fails open to a cache miss if this is
+# unavailable (cascade.go), so an eviction degrades hit rate, not correctness.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tei-models
+  namespace: tas-shared
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      # The model is ~90MB; 2Gi leaves room to swap models (e.g. the
+      # langcache-embed-v2 768-dim upgrade path) without resizing.
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tei
+  namespace: tas-shared
+  labels:
+    app: tei
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # RWO volume — can't run two pods mounting it
+  selector:
+    matchLabels:
+      app: tei
+  template:
+    metadata:
+      labels:
+        app: tei
+    spec:
+      containers:
+        - name: tei
+          # CPU image: the node has no GPU (16 CPU / 30Gi). At 22.6M params
+          # the embed is ~15-30ms on CPU vs an LLM call of 1-5s.
+          image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+          args:
+            - --model-id=redis/langcache-embed-v3-small
+            - --port=8080
+            # Keep the served dimensionality explicit; a silent change here
+            # would corrupt the 384-dim FLAT index rather than fail loudly.
+            - --auto-truncate
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # TEI downloads the model from HF on first start; persist it so a
+            # restart doesn't re-download (and doesn't need egress to be up).
+            - name: HUGGINGFACE_HUB_CACHE
+              value: /data
+          volumeMounts:
+            - name: models
+              mountPath: /data
+          # TEI's /health only passes once the model is loaded and resident —
+          # the specific failure mode Ollama's `GET /` readiness probe misses.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 30 # first start pulls the model from HF
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: tei-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tei
+  namespace: tas-shared
+  labels:
+    app: tei
+spec:
+  type: ClusterIP
+  selector:
+    app: tei
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
