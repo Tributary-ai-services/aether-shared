@@ -6,8 +6,24 @@
 # it isolated means the vector index (and its memory/CPU) can't affect the shared
 # cache every TAS service depends on.
 #
-# In-memory only (a cache repopulates): the entrypoint loads the modules; the app
-# runs FT.CREATE idempotently on startup, so a restart just re-warms from traffic.
+# NO LONGER in-memory only. This instance holds two datasets with very different
+# recovery costs, and only one of them repopulates:
+#
+#   aiqg:scache:{tenant}:*  — cached vectors. A cache; re-warms from traffic.
+#   aiqg:sclabels:pairs     — the L3 judge's labeled pairs. NOT a cache. Every
+#                             entry cost a judge LLM call, it only accumulates
+#                             from live traffic in the sampling band, and it is
+#                             the sole prompt-level corpus that exists (gateway
+#                             events deliberately retain no prompt text). It is
+#                             also the only way to compare embedders, since it
+#                             stores prompts rather than vectors.
+#
+# That corpus was lost once already (2026-08-17) because this pod had no
+# persistence at all, so persistence is now on.
+#
+# The app runs FT.CREATE idempotently on startup and RediSearch backfills an
+# index over existing keys, so the vector index still rebuilds itself after a
+# restart — persistence is here for the labels, not the index.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,14 +49,48 @@ spec:
       - name: redis
         image: redis/redis-stack-server:latest
         # Do NOT override command — the redis-stack entrypoint loads the modules.
-        # REDIS_ARGS tunes the server: pure in-memory (no RDB/AOF) for a cache.
+        #
+        # AOF is the durable log (fsync every second, the Redis default: bounded
+        # loss, no per-write stall), writing to /data, which is now a PVC.
+        #
+        # RDB snapshotting stays off, and no separate --save schedule is set. Two
+        # reasons. Redis 7 writes the AOF *base* in RDB format under
+        # appendonlydir/ (aof-use-rdb-preamble), so module aux data is already
+        # captured — a second schedule buys nothing here. And the redis-stack
+        # entrypoint folds REDIS_ARGS into a generated config file, where a
+        # multi-value --save '900 1 300 10' is re-quoted per token and the server
+        # dies at boot with "Invalid save parameters". Keep --save '' as-is.
+        #
+        # ⚠️ maxmemory-policy is volatile-lru, NOT allkeys-lru, and the
+        # distinction is the whole point. allkeys-lru evicts ANY key under
+        # memory pressure — including aiqg:sclabels:pairs, which carries no TTL.
+        # Persisting the data but leaving it evictable would have re-created the
+        # exact loss this change exists to prevent, just more slowly and with the
+        # eviction faithfully written to the AOF. volatile-lru only evicts keys
+        # that have a TTL, which is precisely the cache entries and never the
+        # corpus.
         env:
         - name: REDIS_ARGS
-          value: "--save '' --appendonly no --maxmemory 512mb --maxmemory-policy allkeys-lru"
+          value: "--save '' --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru"
         ports:
         - containerPort: 6379
           name: redis
-        # Resources omitted — BestEffort QoS until profiled (TAS K8s policy).
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        # Guaranteed QoS. The TAS default is BestEffort-until-profiled, but this
+        # is now stateful infrastructure holding data that cannot be rebuilt, and
+        # the policy's stateful exception applies: it must not be first evicted
+        # under node pressure. Sizing is derived, not profiled — maxmemory is
+        # 512mb and a BGSAVE/AOF-rewrite fork can roughly double RSS via
+        # copy-on-write, so 1Gi. Re-derive if maxmemory changes.
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "250m"
         livenessProbe:
           exec:
             command: ["redis-cli", "ping"]
@@ -51,6 +101,29 @@ spec:
             command: ["redis-cli", "ping"]
           initialDelaySeconds: 5
           periodSeconds: 5
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: redis-semcache-pvc
+---
+# 5Gi against a 512mb dataset is deliberate headroom, not sizing sloppiness: an
+# AOF grows until rewrite and a rewrite needs room for both copies at once.
+# local-path is node-local on the single k3s node, matching every other PVC here.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-semcache-pvc
+  namespace: tas-shared
+  labels:
+    app: redis-semcache
+    component: cache
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: v1
 kind: Service
