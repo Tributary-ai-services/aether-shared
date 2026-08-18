@@ -37,10 +37,12 @@ experiment swaps the model to a GPT variant, and the router's cost-optimized
 strategy prefers a third provider.
 
 This note proposes one resolve contract that returns a **routing decision**
-rather than a policy bundle, and fixes the order in which the three systems
-compose. It is a contract change, not a feature: the point is to settle the seam
-before enforcement (Stage 4.1), fallback policy and the model registry are all
-built against the current bundle-only shape and have to be reworked.
+rather than a policy bundle, fixes the order in which the three systems compose,
+and collapses the two matcher languages into one (§4).
+
+It is a contract change, not a feature: the point is to settle the seam before
+enforcement (Stage 4.1), fallback policy and the model registry are each built
+against the current bundle-only shape and then have to be reworked.
 
 ### 1.1 What already exists (audited 2026-08-18)
 
@@ -156,7 +158,84 @@ Rules that follow from this ordering:
 
 ---
 
-## 4. Validation Rules
+## 4. One matcher, not two
+
+Route rules and experiment cohorts match on overlapping fields with **different
+semantics for the same key**, which is the part that cannot be allowed to
+persist once routing steers execution:
+
+| field | route rule | experiment cohort |
+|---|---|---|
+| `url_path` | **RE2 regex** | **substring** |
+| `model`, `source_app`, `workflow_type` | list, OR-within, case-insensitive | list, OR-within |
+| `vendor` | supported | absent |
+| `customer_header_match` | supported | absent |
+| `time_window` | reserved, unbuilt | absent |
+
+Two operators writing "the same" matcher against the two surfaces get different
+traffic. `url_path: "/v1/chat"` selects by substring in a cohort and by regex in
+a rule — which happen to agree here and diverge the moment anyone writes `.` or
+`*`.
+
+### 4.1 Canonical matcher
+
+One schema, one evaluator, used by both:
+
+```jsonc
+{
+  "url_path":     "^/v1/chat",         // RE2 regex, matched with MatchString
+  "model":        ["gpt-4o"],          // lists: OR within, case-insensitive
+  "vendor":       ["openai"],
+  "source_app":   ["checkout"],
+  "workflow_type":["rag"],
+  "customer_header_match": {"header_name": "X-Team", "regex_value": "^eng$"}
+}
+```
+
+Semantics, unchanged from the route matcher because it is the stricter of the
+two: an absent or empty field is **no constraint**; set fields combine with AND;
+lists OR within; a malformed regex **fails closed** (matches nothing) rather
+than widening; unknown fields are **rejected** at write time and on read.
+
+RE2 is chosen over substring deliberately. Substring cannot express anchoring,
+so a cohort keyed on `/v1/chat` also claims `/v1/chat_admin`; regex can express
+substring (`.*foo.*`) but not the reverse.
+
+### 4.2 Where the evaluator lives
+
+Route matching runs in `aiqg-dashboard-be` at resolve time; cohort matching runs
+in `tas-llm-router` at routing time. One schema evaluated by two services means
+the evaluator must be a shared library, not a copy — a duplicated matcher is how
+the two semantics diverged in the first place. `tas-llm-router` already consumes
+`aether-shared/go-events` and `Gatekeeper` as sibling modules, so a shared
+`aether-shared/go-aiqg-matcher` follows existing precedent.
+
+### 4.3 Migration — a rewrite, not a dual-write
+
+Normally route-rule.md §10.3 would apply: never break stored matchers,
+migrate by dual-write. That is unnecessary here, and the reason is measured
+rather than assumed. As of 2026-08-18 the estate is:
+
+- **9 experiments** — 7 `archived`, 1 `dry_run`, 1 `draft`
+- **18 variants**
+- **0 running**
+
+Nothing is serving traffic through a cohort matcher, so the stored cohorts can
+be rewritten in place:
+
+1. `url_path` substring → `regexp.QuoteMeta(substring)`, preserving today's
+   behaviour exactly rather than guessing at intent.
+2. Reject on read anything that still fails strict decoding, so a missed row
+   fails closed instead of silently matching everything.
+3. Archived experiments are migrated too — they are read for historical
+   attribution, and a matcher that no longer parses would break that reporting.
+
+If this lands after experiments are in real use, this section is void and the
+dual-write path applies instead.
+
+---
+
+## 5. Validation Rules
 
 1. `target.provider` must name a configured, enabled provider for the tenant —
    rejected at write time, not at request time.
@@ -173,7 +252,7 @@ Rules that follow from this ordering:
 
 ---
 
-## 5. Relationships
+## 6. Relationships
 
 ```
 AIQGRouteRule ──matches──▶ RoutingDecision ──references──▶ AIQGPolicyBundle
@@ -184,10 +263,15 @@ AIQGRouteRule ──matches──▶ RoutingDecision ──references──▶ A
 
 ---
 
-## 6. Migration Strategy
+## 7. Migration Strategy
 
 Deliberately incremental, because the contract is worth proving on one field
 before the whole shape is committed.
+
+**Step 0 — unify the matcher (§4).** Extract the shared evaluator, rewrite the
+9 stored cohorts, delete the second implementation. Done first because every
+later step adds fields to a matcher, and adding them twice to two diverging
+languages is the cost this avoids.
 
 **Step 1 — wire `provider_override` end to end.** It already exists in schema,
 store, API and UI, and is already validated. Return it as `target.provider` from
@@ -210,7 +294,7 @@ build-vs-reuse §1.2.
 
 ---
 
-## 7. Open Questions
+## 8. Open Questions
 
 1. **Does an experiment's model swap survive a fallback?** If a variant routes to
    `gpt-4o-mini` and OpenAI is down, does the chain apply (leaving the request in
@@ -229,12 +313,13 @@ build-vs-reuse §1.2.
 
 ---
 
-## 8. Risks
+## 9. Risks
 
-- **Three matcher languages become one more, not one fewer.** This note does not
-  unify the experiment cohort matcher with the route matcher; it only fixes
-  precedence. Unifying them is the obvious follow-up and is deliberately out of
-  scope, because a shared matcher is a breaking change to stored experiments.
+- **The matcher unification (§4) breaks stored experiment cohorts.** Accepted
+  deliberately: 0 of 9 experiments are running, so nothing serving traffic is
+  affected, and the alternative is two matcher languages diverging permanently
+  under a contract that steers execution. The window for doing this cheaply is
+  open now and closes the moment experiments carry real traffic.
 - **Route-rule matching is barely exercised.** As of 2026-08-18 exactly one
   production tenant has a rule, it is match-all, and matching was proven via a
   direct resolver call rather than live traffic. Building steering and fallback
@@ -248,7 +333,7 @@ build-vs-reuse §1.2.
 
 ---
 
-## 9. Related Documentation
+## 10. Related Documentation
 
 - [[route-rule]] — matcher schema, resolution order, Phase-2 placeholders
 - [[policy-bundle]] · [[policy-rule]] — what a bundle contains and what an action means
