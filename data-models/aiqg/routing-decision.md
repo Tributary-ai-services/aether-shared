@@ -8,7 +8,7 @@
 service: aiqg-dashboard-be + tas-llm-router
 model: AIQGRoutingDecision
 database: PostgreSQL (aiqg schema)
-version: 0.2.0
+version: 0.3.0
 last_updated: 2026-08-19
 status: proposed (additive; no existing type, endpoint or column changes shape)
 spec_refs: source-spec-v0.2.md §3.5.2 (route-attached policy / resolution order)
@@ -38,7 +38,8 @@ This note proposes one resolve contract that returns a **routing decision**
 rather than a policy bundle, fixes the order in which the three systems compose,
 collapses the two matcher languages into one (§5), and — new in v0.2 — adopts the
 parts of the load-balancer canon that survive contact with LLM traffic (§3–§4),
-including a first-class treatment of **affinity** (§6).
+including a first-class treatment of **affinity** (§6), the switching costs that
+make affinity economic (§7), session identity (§8) and cache-key design (§9).
 
 It is a contract change, not a feature: the point is to settle the seam before
 enforcement (Stage 4.1), fallback policy and the model registry are each built
@@ -136,27 +137,85 @@ Copying the canon wholesale would be wrong. Four differences matter:
 
 ---
 
-## 4. Selection strategy
+## 4. Selection strategy — expected cost, not list price
 
 Today: one global strategy (`cost-optimized` | `round-robin` | `performance`)
-chosen at process start. Proposed: strategy is part of the decision, so a tenant
-or a route can differ, with `weights` for canary and progressive rollout.
+chosen at process start. Two things are wrong with it, and the second is worse
+than the first.
+
+### 4.1 Cost routing currently optimises the wrong 8%
+
+`EstimateCost` in both providers estimates output as **`max_tokens` — the
+ceiling** (`anthropic/provider.go:312`, `openai/provider.go`), falling back to a
+literal 100 when unset. So two models with the same `max_tokens` price
+identically on output no matter how differently they actually behave.
+
+That would be a rounding error if output were cheap. It is not. Measured on our
+own traffic, output is **90–99% of the bill**:
+
+| model (single_turn_qa) | n | avg in | avg out | $/req | output share |
+|---|---|---|---|---|---|
+| `claude-opus-4-6` | 33 | 31.0 | **452.4** | 0.034395 | 99% |
+| `claude-haiku-4-5` | 1258 | 32.8 | **61.6** | 0.000273 | 90% |
+| `gpt-4o-mini` | 48 | 13.9 | **48.0** | 0.000031 | 93% |
+
+Same workflow, near-identical input, and a **7.3× verbosity spread**. Cost
+routing today optimises the 8% it can see and guesses the 92% that decides the
+answer.
+
+### 4.2 The verbosity budget rule
+
+A cheaper model only wins if its extra verbosity stays inside its price
+advantage. For output-dominated traffic that reduces to a rule worth stating
+plainly:
+
+> **A model's verbosity budget is its output-price ratio.**
+> Model B beats model A while `out_B/out_A < p_out_A/p_out_B`.
+
+Applied to the measured data, against `claude-haiku-4-5`:
+
+| candidate | may be … more verbose | actually is | verdict |
+|---|---|---|---|
+| `gpt-4o-mini` | **6.7×** | 0.78× | wins comfortably — break-even at **451** output tokens, 9.4× its current length |
+| `claude-opus-4-6` | 0.05× | 7.34× | loses by ~126×, as its list price already implies |
+
+The useful case is the first one: `gpt-4o-mini` has ~9× of verbosity headroom
+before the cheaper list price stops being a cheaper bill. A model with a 10%
+price advantage has 10% of headroom, and one bad prompt template erases it.
+
+### 4.3 Proposal
 
 ```jsonc
 "selection": {
-  "strategy": "cost",                            // cost | latency | p2c_ewma | weighted | pinned
+  "strategy": "expected_cost",                   // cost | expected_cost | latency | p2c_ewma | weighted | pinned
   "weights":  {"anthropic": 90, "openai": 10}    // weighted only — canary lives here
 }
 ```
 
+`expected_cost` prices a candidate as
+`in_tokens × p_in + E[out_tokens | model, workflow_type] × p_out`, where the
+expectation is measured from our own response events rather than assumed. It
+**abstains** — falling back to today's `max_tokens` estimate — below a sample
+floor per (model, workflow), because a verbosity factor off three requests is
+noise.
+
+Two guards this needs, and they are not optional:
+
+- **Verbosity is not quality.** A terser model may simply be answering less.
+  Expected-cost routing without a quality floor optimises for brevity, which is
+  why it pairs with CLEAR efficacy scores rather than replacing them.
+- **`max_tokens` is a ceiling, not an estimate, and must stay in the estimate as
+  a cap.** A model that would run long gets truncated, and the truncated cost is
+  what you actually pay.
+
 Adopting Portkey's observation explicitly: **canary is load balancing with a
 different intent.** A 90/10 weight split and a canary rollout are the same
-mechanism, so they should not be two features. What differs is who watches the
-result — the experiment runner's job, which already exists.
+mechanism; what differs is who watches the result — the experiment runner's job,
+which already exists.
 
-`p2c_ewma` is proposed as the eventual default over `performance`, because it
-routes on observed behaviour with O(1) selection and moves traffic off a
-degrading provider before it fails outright.
+`p2c_ewma` is proposed as the eventual default over `performance`: it routes on
+observed behaviour with O(1) selection and sheds traffic from a degrading
+provider before it fails outright.
 
 ---
 
@@ -297,7 +356,161 @@ lifetime, so affinity expires when the thing it protects expires.
 
 ---
 
-## 7. Health, budgets and hedging
+## 7. Switching costs — why "cheaper" can be more expensive
+
+Affinity has an economic mirror image that no list-price comparison shows:
+**moving a request to a different provider throws away a warm cache and makes
+you pay to rebuild it.**
+
+Anthropic prices the cache explicitly — a write costs **1.25×** base input, a
+read **0.10×**. So abandoning a warm prefix and establishing it elsewhere costs
+`(1.25 − 0.10) × p_in × prefix_tokens` as a one-off, before any per-request
+saving starts accruing.
+
+For our measured RAG prefix of 3,324 tokens at Haiku input pricing, that penalty
+is **$0.00306**, against a cached request that costs **$0.000486**. How many
+further requests inside the TTL window it takes to repay:
+
+| per-request saving | requests needed to break even |
+|---|---|
+| 5% | **126** |
+| 10% | **63** |
+| 25% | 25 |
+| 50% | 13 |
+| 80% | 8 |
+
+The default cache TTL is **five minutes**. A 10% cheaper route therefore has to
+attract 63 further requests from the same conversation inside five minutes
+before it is actually cheaper. For most traffic it will not, and the "saving"
+is a loss.
+
+Two consequences:
+
+1. **Small price advantages should not move traffic at all when a cache is
+   warm.** This is flap damping, and the load-balancer canon already has the
+   shape for it — a minimum improvement threshold plus a dwell time.
+2. **Flapping costs twice.** Switching back re-warms the original. A cost
+   strategy that chases a moving price without hysteresis pays the penalty in
+   both directions.
+
+```jsonc
+"switching": {
+  "min_improvement_pct": 25,     // ignore anything smaller while a cache is warm
+  "dwell": "60s",                // minimum time on a target before another move
+  "warm_cache_bias_pct": 15      // handicap applied to challengers while warm
+}
+```
+
+These numbers are deliberately conservative defaults, not tuning: 25% is the
+point at which the table above repays inside a plausible five-minute burst.
+
+---
+
+## 8. Session identity — when has a session *really* changed?
+
+Long sessions wander across topics, so "same conversation" is a poor proxy for
+"same routing context". But the three things one might mean by *changed* have
+three different answers, and only one of them involves topics at all.
+
+| question | correct signal | topic drift relevant? |
+|---|---|---|
+| Is the vendor's prompt cache still warm? | **TTL expiry + stable-prefix change** | **No** |
+| Is our semantic cache entry valid? | per-request similarity + L2 guards | n/a — C4 has no session concept |
+| Is it safe to switch models? | **topic drift** | **Yes — as a seam, not a break** |
+
+### 8.1 Prompt-cache warmth is topic-independent
+
+A three-hour session covering eight topics keeps its vendor cache the whole time,
+provided the stable prefix (system prompt + tool schemas) does not change and
+requests stay inside the TTL. The cache is keyed on **prefix bytes**, not
+meaning. Invalidating affinity because the subject changed would discard a warm
+cache for no reason — an expensive mistake dressed as diligence.
+
+### 8.2 Session epoch — a cheap, deterministic identity
+
+```
+epoch  = (stable_prefix_hash, idle_bucket)
+key    = (conversation_id, epoch)
+```
+
+The epoch increments when either:
+
+- the **stable prefix changes** — the system prompt or tool set was edited, so
+  the vendor cache is cold regardless of what we do; or
+- the **gap since the previous request exceeds `affinity.ttl`** — the cache has
+  expired, so affinity is free and costs nothing to abandon.
+
+No embeddings, no thresholds, no per-turn inference. `cachePrefixHash` already
+computes the first component. Idle-bucketing gives the second for the price of a
+timestamp comparison.
+
+### 8.3 Topic drift is for finding a seam, not for invalidating a cache
+
+The one place semantic drift genuinely helps inverts the usual framing. A model
+switch is most noticeable *mid-topic* — voice, formatting and refusal behaviour
+change under the user's feet. At a topic boundary it is nearly invisible.
+
+So drift detection is not a cache signal; it is a **scheduling** signal for
+`on_break: prefer_same` — the moment at which a deferred switch can finally be
+taken. That makes it strictly optional: costing an embedding per turn to find a
+politer moment to re-route is worth it only for long interactive sessions, and
+the failure mode of skipping it is mild.
+
+**Anti-pattern, stated explicitly**: do not use topic drift to invalidate
+prompt-cache affinity. The two are unrelated, and conflating them throws away
+warm caches while leaving genuinely stale pins in place.
+
+---
+
+## 9. Cache key specification
+
+Three caches sit in this path, with three different keys and three different
+invalidation rules. They are currently specified in three places and interact in
+ways nothing documents.
+
+| cache | key today | TTL | store |
+|---|---|---|---|
+| **C1 exact response** | sha256(tenant, vendor, model, full messages, temperature, seed, …) | 10m | `redis-shared`, `aiqg:cache:{tenant}:*` |
+| **C4 semantic** | embedding(`lastUserText`) + Scope(tenant, model, scoring_version) | 30m | `redis-semcache`, `aiqg:scache:{tenant}:*` |
+| **vendor prompt cache** | not ours — the vendor hashes our prefix bytes | 5m / 1h | vendor side; probed via `cachePrefixHash` |
+
+Six rules the keys should obey:
+
+1. **Include what changes the answer; exclude what changes only the route.**
+   Vendor and model change the answer, so they belong in the key — with the
+   consequence that a provider switch busts *our* C1 as well as the vendor's
+   cache. That is a second cost stacked on §7's, and it should be counted there
+   rather than discovered.
+2. **Cross-model reuse is an opt-in tier, not a key change.** The tempting fix —
+   drop `model` from the key — silently serves an Opus answer to a Haiku request,
+   which corrupts attribution and makes CLEAR scores incomparable. If wanted, it
+   should be a *second* lookup, tenant opt-in, stamped
+   `cache_state=cross_model_hit` so the reporting stays honest.
+3. **Normalise before hashing.** Key order in tool schemas, trailing whitespace,
+   and `content` given as a string versus a one-element array all produce
+   different bytes for identical requests. Canonical JSON ordering and trimmed
+   whitespace, or the cache fragments for reasons no operator can see.
+4. **Exclude routing-only fields**: retry counters, request ids, timestamps,
+   `TAS-*` headers. Anything the router adds must not enter the key, or every
+   retry becomes a miss.
+5. **Reduction must be deterministic, or it fragments every key at once.**
+   Payload reduction rewrites the request; if identical input reduces differently
+   on two calls, C1 misses *and* the vendor prefix misses. Reduction is currently
+   query-anchored and therefore stable per call, but the invariant is implicit —
+   it should be stated and tested, because it is load-bearing for two caches.
+6. **The prefix key covers the stable span only** — system prompt plus tool
+   schemas plus leading context, never the trailing user turn. Include the turn
+   and every request is a new key, which is the failure mode that makes prefix
+   probes look useless.
+
+One deferred optimisation, noted so it is not rediscovered: two requests
+differing only in `max_tokens` could share an entry when the stored answer is
+shorter than the new cap, since `max_tokens` truncates rather than changes the
+answer. Correct, but not worth the special-casing until the simpler rules land.
+
+---
+
+## 10. Health, budgets and hedging
 
 The canon's resilience primitives, translated. All optional; absent means today's
 behaviour.
@@ -331,7 +544,7 @@ Three deliberate choices:
 
 ---
 
-## 8. The contract
+## 11. The contract
 
 ```jsonc
 // POST /internal/policy/resolve → 200
@@ -344,7 +557,9 @@ Three deliberate choices:
 
   // ---- new, all optional ----
   "target":    { "provider": "anthropic", "model": null, "source": "route_rule" },
-  "selection": { "strategy": "cost", "weights": null },
+  "selection": { "strategy": "expected_cost", "weights": null },
+  "switching": { "min_improvement_pct": 25, "dwell": "60s", "warm_cache_bias_pct": 15 },
+  "cache":     { "cross_model_reuse": false },   // opt-in; stamps cache_state=cross_model_hit
   "fallback":  { "chain": [ {"provider":"anthropic","model":"claude-haiku-4-5-20251001"},
                             {"provider":"openai","model":"gpt-4o-mini"} ],
                  "on": ["vendor_error","timeout","context_overflow"] },
@@ -367,7 +582,7 @@ aspirational.
 
 ---
 
-## 9. Composition order
+## 12. Composition order
 
 **Resolution decides, experiments overlay, the router executes, enforcement
 applies.** Each stage may only narrow or replace what the previous produced, and
@@ -391,7 +606,7 @@ each stamps its identity on the event.
 - **Global strategy is the floor.** No `target` and no `selection` means exactly
   today's behaviour.
 
-### 9.1 Precedence
+### 12.1 Precedence
 
 | decision | set by | beaten by |
 |---|---|---|
@@ -405,7 +620,7 @@ each stamps its identity on the event.
 
 ---
 
-## 10. Validation Rules
+## 13. Validation Rules
 
 1. `target.provider` must name a configured, enabled provider for the tenant.
 2. Every `fallback.chain` entry must be a valid `(provider, model)` pair and must
@@ -421,10 +636,19 @@ each stamps its identity on the event.
    miss.
 7. `enforcement.mode = enforce` requires at least one bundle rule with a non-`log`
    action, so "enforcing" never silently means "doing nothing".
+8. `selection.strategy = expected_cost` requires a measured verbosity factor for
+   the (model, workflow) pair above the sample floor; below it the router falls
+   back to the `max_tokens` estimate and says so on the event, rather than
+   pricing on three data points.
+9. `switching.min_improvement_pct` may not be 0 while `affinity` is set — a zero
+   threshold means every price tick abandons a warm cache, which §7 shows is a
+   loss below ~25%.
+10. `cache.cross_model_reuse = true` requires the tenant to have acknowledged
+    that CLEAR scores become incomparable across the reused entries.
 
 ---
 
-## 11. Gap analysis
+## 14. Gap analysis
 
 | capability | field norm | us today | proposed |
 |---|---|---|---|
@@ -437,6 +661,10 @@ each stamps its identity on the event.
 | Prompt-cache affinity | prefix-hash routing; `prompt_cache_key` | **none** (#100: `cache_control` dropped) | `affinity` |
 | Token-based limiting | Kong, Cloudflare | request-based | *out of scope — noted* |
 | Compliance-constrained routing | OpenRouter data policy | bundles carry intent, routing ignores it | `constraints` |
+| Expected-cost (verbosity-aware) routing | — *nobody does this well* | prices output at `max_tokens`, the ceiling | `selection.expected_cost` |
+| Switch hysteresis / flap damping | Envoy dwell + slow start | none — cost strategy may move on any delta | `switching` |
+| Session identity for affinity | LB cookie rotation | none | `epoch` (§8) |
+| Cache-key normalisation | standard practice | ad hoc per cache | §9 rules |
 | Quality-based routing | RouteLLM cascades | none | *out of scope — noted* |
 
 Two are deliberately **not** proposed. Token-based rate limiting belongs with
@@ -446,7 +674,7 @@ the same gate as enforcement.
 
 ---
 
-## 12. Migration Strategy
+## 15. Migration Strategy
 
 **Step 0 — unify the matcher (§5).** Extract the shared evaluator, rewrite the 9
 stored cohorts, delete the second implementation. First, because every later step
@@ -463,11 +691,16 @@ semantics, only bookkeeping around the existing call.
 **Step 3 — `fallback.chain` + `constraints`.** Chains are only safe once
 constraints can express which vendors a tenant may not reach.
 
-**Step 4 — `affinity`.** Pairs with #100 (`cache_control` pass-through); neither is
-worth much alone. Start at prefix-hash (tier 2).
+**Step 4 — `affinity` + `epoch` (§8) + the §9 key rules.** Pairs with #100
+(`cache_control` pass-through); neither is worth much alone. Start at prefix-hash
+(tier 2). The epoch is a prerequisite, not a follow-up — affinity without an
+expiry signal is a pin that never releases.
 
-**Step 5 — `selection`** (weights first, then `p2c_ewma`). Needs step 2's health
-data to be worth anything.
+**Step 5 — `selection`** (weights first, then `expected_cost`, then `p2c_ewma`).
+`expected_cost` needs only a verbosity table built from events we already emit,
+so it can land before `p2c_ewma`, which needs step 2's health data. Ship
+`switching` in the same step: an `expected_cost` router without hysteresis is
+precisely the flapping cost machine §7 describes.
 
 **Step 6 — `limits`.** Waits on the model registry (#2–#6).
 
@@ -478,7 +711,7 @@ Every step is additive per build-vs-reuse §1.2.
 
 ---
 
-## 13. Open Questions
+## 16. Open Questions
 
 1. **Does an experiment's model swap survive a fallback?** Attribution says leave
    the experiment and mark it abandoned; continuity says stay. Now sharper: a
@@ -493,10 +726,20 @@ Every step is additive per build-vs-reuse §1.2.
    prefix structure; ours is the default when they say nothing.
 4. **Does `time_window` belong in this pass**, while the matcher is already open?
 5. **Should `workflow_type` be formally promoted** — is the doc wrong, or the code?
+6. **Is `cross_model_reuse` ever acceptable?** It raises hit rate and destroys
+   score comparability. My instinct is no by default and yes for a tenant that
+   explicitly values cost over measurement — but it may be simpler to decline it
+   entirely than to explain what the scores then mean.
+7. **Where does the verbosity table live?** Computed in dashboard-be from events
+   and shipped on the decision keeps the gateway stateless; computed in the
+   gateway is fresher but makes two services disagree about price.
+8. **Does `switching.dwell` apply across a fallback?** A failover is not a price
+   decision, so it probably should not count against the dwell timer — otherwise
+   an outage pins you to a degraded provider.
 
 ---
 
-## 14. Risks
+## 17. Risks
 
 - **Route-rule matching is barely exercised.** One production tenant has a rule, it
   is match-all, and matching was proven by calling the resolver directly rather than
@@ -511,13 +754,21 @@ Every step is additive per build-vs-reuse §1.2.
   to a vendor that may not be cheapest; cost routing shreds prompt caches. The
   contract makes the trade explicit rather than choosing globally — but a tenant can
   configure a combination worse than either alone, and the UI has to say so.
+- **Expected-cost routing optimises for brevity if left unguarded.** A terser
+  model may simply be answering less. This is why it is specified alongside a
+  CLEAR efficacy floor rather than as a standalone strategy — and why the
+  verbosity factor abstains below a sample floor instead of guessing.
+- **Verbosity is workload-specific and drifts.** A factor measured on
+  `single_turn_qa` says nothing about `rag`, and a prompt-template change can
+  move it overnight. The table needs a decay window and a staleness alarm, or it
+  becomes a confidently wrong price list.
 - **This adds surface to a component that is already three systems.** Mitigation:
   every field is optional and absent means today's behaviour. The residual risk is
   that "optional" becomes "undocumented default nobody understands".
 
 ---
 
-## 15. Related Documentation
+## 18. Related Documentation
 
 - [[route-rule]] — matcher schema, resolution order, Phase-2 placeholders
 - [[policy-bundle]] · [[policy-rule]] — bundle contents and rule actions
