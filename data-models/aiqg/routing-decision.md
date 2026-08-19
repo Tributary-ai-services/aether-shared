@@ -457,36 +457,182 @@ misses; key the prefix on the **stable span only**, never the trailing user turn
 
 ## 7. Implementation plan
 
-Each step is independently shippable and additive. **Acceptance** is what must be
-true to call it done — not "the code merged".
+Nine steps, each independently shippable and additive. Every step lists work in
+all three repositories plus the UI, because several of these features are
+unusable without an editor — a fallback chain nobody can author is not a feature.
 
-| # | Step | Depends on | Acceptance |
-|---|---|---|---|
-| 0 | **Unify the matcher** | — | One evaluator in a shared module; 9 cohorts rewritten; second implementation deleted; identical traffic selected pre/post on a replayed sample |
-| 1 | **`target` end to end** | 0 | A live request carries `source=route_rule` **and** lands on the rule's provider |
-| 2 | **`health` + `budgets`** | 1 | A 5xx provider is ejected within the window and restored half-open; a 429 backs off without ejection; retries never exceed the ratio under induced failure |
-| 3 | **`fallback.chain` + `constraints`** | 2 | Chain walks in order on induced failure; a denied vendor is rejected at write time, not at failover |
-| 4 | **`affinity` + `epoch` + §5.9 key rules** | 1, #100 | Vendor cache-read share measurably rises on a repeated-prefix flow; epoch increments on prefix change and on idle > TTL |
-| 5 | **`selection` + `switching`** | 2 | Verbosity table built from events with sample floors; expected-cost picks differ from list-price picks on a known case; no flapping under a synthetic price oscillation |
-| 5b | **`signals`** | 5, demo-flow attribution | Assurance gate drops a candidate on evidence; synthetic traffic excluded; thin data is a no-op |
-| 6 | **`limits`** | model registry #2–#6 | Per-model windows come from the registry, not source constants |
-| 7 | **`enforcement`** | 3, 5b | A `block` rule blocks; an enforcing bundle with only `log` rules is rejected |
-
-**Gate before step 2.** A live end-to-end request must produce an event carrying
-`source=route_rule`. As of 2026-08-19, route-rule matching has been proven only
-by calling the resolver directly — one production tenant, one match-all rule.
-Building steering and fallback on a path with no observed live match is the
-single largest risk in this plan.
-
-**Sequencing rationale, where it is not obvious:**
-
-- **Health before chains** — a chain without cooldown just fails faster in a loop.
-- **`switching` with `selection`, not after** — an expected-cost router without
-  hysteresis flaps and pays the re-warm twice.
-- **Enforcement last** — it is the only step that changes a customer-visible
-  outcome, and it should sit on a contract already exercised by the others.
+**Cross-cutting UI decision.** `RoutingManager` today is a table with an inline
+create row, adequate for *matcher → bundle*. Steps 1–6 add six more concerns
+(target, resilience, fallback, affinity, selection, signals). A single inline row
+cannot carry that. **Recommendation: keep the table as the list view and add a
+full-height drawer editor with sections**, introduced at step 1 and extended
+thereafter, so each step adds a section rather than redesigning the surface.
 
 ---
+
+### Step 0 — Unify the matcher
+
+| Repo | Work |
+|---|---|
+| **aether-shared** | New shared Go module `go-aiqg-matcher`: matcher struct, strict parse, evaluate, canonicalise. Single source of truth. |
+| **aiqg-dashboard-be** | Replace `internal/handlers/route_match.go` with the shared library; keep write-time validation. One-shot idempotent migration rewriting 9 stored cohorts (`url_path` substring → `regexp.QuoteMeta`). |
+| **tas-llm-router** | Replace the cohort matcher in `pkg/aiqg/experiments` with the shared library. |
+| **aiqg-ui** | Extract `MatcherEditor` from `RoutingManager`; reuse it in the Experiments cohort editor so both surfaces offer the same fields and validation. Add inline regex validation and a **“test matcher”** affordance that shows which recent requests a matcher would select. |
+
+**Acceptance** — one evaluator; 9 cohorts rewritten; second implementation
+deleted; a replayed traffic sample selects identically pre/post.
+
+**Risk** — the migration is one-way. Mitigated by 0 running experiments and a
+pre-migration export.
+
+---
+
+### Step 1 — `target` end to end
+
+| Repo | Work |
+|---|---|
+| **aiqg-dashboard-be** | `bundleResolveResponse` returns `target` from `route_rule.provider_override`; record which rung set it. |
+| **tas-llm-router** | Read `target`; pin provider/model before selection; stamp `target_source` on the event. |
+| **Data** | Two event fields → Timescale columns. |
+| **aiqg-ui** | **New drawer editor** (see above), section 1 *Matcher*, section 2 *Route to* — provider select, optional model, and an explicit “no override” state. `matcherSummary` gains the target. Live Monitor and Traffic Explorer show which rung chose the provider. |
+
+**Acceptance** — a live request carries `source=route_rule` **and** lands on the
+rule’s provider. **Gate:** this must be demonstrated on live traffic before
+step 2 (§10).
+
+---
+
+### Step 2 — `health` + `budgets`
+
+| Repo | Work |
+|---|---|
+| **tas-llm-router** | Per-target circuit state in Redis so replicas share it; ejection on consecutive errors or error-rate; half-open single-probe restore; retry budget accounted as a ratio of live requests; `429` → backoff honouring `retry-after`, no ejection. |
+| **aiqg-dashboard-be** | `health` + `budgets` in resolve; CRUD and validation on the route rule. |
+| **aiqg-ui** | Drawer section 3 *Resilience*: eject-after, window, half-open delay, 429 policy, retry ratio, max attempts — each with a plain-language explanation of the failure it prevents. **New Provider Health panel on Live Monitor**: per-provider state (healthy / ejected / half-open), last transition, and reason. Operationally this is the most important new surface in the whole plan — an ejection nobody can see is indistinguishable from an outage. |
+
+**Acceptance** — induced 5xx ejects within the window and restores half-open; a
+429 backs off without ejection; retries never exceed the ratio under load.
+
+---
+
+### Step 3 — `fallback.chain` + `constraints`
+
+| Repo | Work |
+|---|---|
+| **aiqg-dashboard-be** | `chain` JSONB on route rule; tenant-level `constraints`; write-time validation of every chain entry against constraints and the provider catalogue. |
+| **tas-llm-router** | Walk the chain on eligible failures only; stamp chain position and the reason it advanced. |
+| **aiqg-ui** | Drawer section 4 *Fallback*: ordered chain builder — add, remove, drag-reorder, provider+model pickers, inline validation showing *why* an entry is rejected. Tenant **Constraints editor** (deny vendors, require zero-retention) in Governance. Errors page gains a fallback breakdown: how often, to what, and why. |
+
+**Acceptance** — the chain walks in order on induced failure; a denied vendor is
+rejected at write time, not discovered at failover.
+
+---
+
+### Step 4 — `affinity` + `epoch` + cache-control pass-through
+
+| Repo | Work |
+|---|---|
+| **tas-llm-router** | Affinity store in Redis keyed `(tenant, conversation, epoch)` → provider/model; epoch from `cachePrefixHash` + idle bucket; **pass client `cache_control` through** (closes #100). |
+| **aiqg-dashboard-be** | `affinity` in resolve. |
+| **aiqg-ui** | Drawer section 5 *Affinity*: key source, scope, TTL, on-break behaviour. Caching settings page gains a **Provider affinity** card. Traffic Explorer shows, per request, whether affinity held, and when an epoch incremented and why (prefix change vs idle expiry). |
+
+**Acceptance** — vendor cache-read share measurably rises on a repeated-prefix
+flow; epoch increments on prefix change and on idle beyond TTL.
+
+---
+
+### Step 5 — `selection` + `switching`
+
+| Repo | Work |
+|---|---|
+| **aiqg-dashboard-be** | Scheduled job building the verbosity table per `(model, workflow)` from events, with sample floor, decay window and staleness marking; served on resolve. |
+| **tas-llm-router** | `expected_cost` strategy; `weighted` for canary; hysteresis — minimum improvement, dwell timer, warm-cache handicap. |
+| **aiqg-ui** | Drawer section 6 *Selection*: strategy picker with an explanation of each, weights editor for canary, switching thresholds. **New “Model economics” report** — measured verbosity per model × workflow, cost per request, and the verbosity budget against actual, so the routing decision is legible rather than a black box. Staleness and low-sample states shown explicitly. |
+
+**Acceptance** — expected-cost differs from list-price ranking on a known case;
+no flapping under a synthetic price oscillation; abstention below the sample
+floor is visible in the UI.
+
+---
+
+### Step 6 — `signals` (CLEAR-gated routing)
+
+| Repo | Work |
+|---|---|
+| **Prerequisite** | Demo-flow / synthetic attribution stamped on events, so test traffic can be excluded. |
+| **aiqg-dashboard-be** | Aggregate CLEAR per `(model, workflow, tenant)` excluding synthetic; staleness; serve as `signals`. |
+| **tas-llm-router** | Filter the candidate set by floors *before* selection; stamp which candidates were filtered and on which dimension. |
+| **aiqg-ui** | Drawer section 7 *Quality gates*: minimum efficacy, maximum assurance severity, sample floor, staleness, behaviour on insufficient data. **CLEAR Scorecard gains a “routing eligibility” view** — which models currently pass or fail this tenant’s floors, on what evidence, with sample counts. Traffic Explorer shows “candidate excluded by signals” as a first-class outcome. |
+
+**Acceptance** — the assurance gate drops a candidate on evidence; synthetic
+traffic is excluded from aggregates; thin data is a no-op.
+
+---
+
+### Step 7 — `limits`
+
+Depends on the model registry (tas-llm-router #2–#6).
+
+**UI** — registry admin view: models with status (active / deprecated /
+unavailable), context windows, pricing and last sync; per-route limit overrides
+that may only lower a provider’s advertised window.
+
+---
+
+### Step 8 — `enforcement` (Stage 4.1)
+
+| Repo | Work |
+|---|---|
+| **tas-llm-router** | Apply rule actions at decision points B and C; fail-open/closed per configuration; stamp the enforcement outcome and the mode that applied. |
+| **aiqg-dashboard-be** | `enforcement.mode` in resolve; validation that an enforcing bundle has at least one non-`log` rule. |
+| **aiqg-ui** | **Enforcement toggle per bundle with a dry-run diff** — *“if this bundle had been enforcing over the last 7 days, N requests would have been blocked and M redacted; here they are.”* This is the single most important UI in the plan: it converts enforcement from an act of faith into a reviewable decision. Rule editor shows per-rule impact counts. Security report separates *would-block* from *blocked*. |
+
+**Acceptance** — a `block` rule blocks; an enforcing bundle containing only `log`
+rules is rejected; the dry-run diff matches actual enforcement when enabled.
+
+---
+
+### Step 9 — AIR Ops suggestion stage
+
+| Repo | Work |
+|---|---|
+| **aiqg-dashboard-be** | Suggestion engine evaluating computable conditions over existing events (cost, quality, policy classes per §10.4); suggestion store with evidence and provenance. |
+| **aiqg-ui** | **New “Recommendations” surface** — an inbox of suggestions, each showing the condition, the evidence, and the affected traffic, with two actions: *run as experiment* (creates a dry-run experiment pre-filled from the suggestion) and *draft policy* (opens the bundle editor pre-filled). AI-generated explanations render as drafts with provenance shown. Nothing applies without review. |
+
+**Acceptance** — a detected condition produces a suggestion carrying its
+evidence; accepting one creates a `dry_run` experiment; no suggestion can
+activate a change without human approval.
+
+---
+
+### Sequencing rationale
+
+- **Health before chains** — a chain without cooldown fails faster in a loop.
+- **`switching` with `selection`** — an expected-cost router without hysteresis is
+  the flapping cost machine of §3.3.
+- **Synthetic attribution before signals** — scoring a vendor on our own test
+  harness is worse than not scoring it.
+- **Enforcement late** — it is the only step that changes a customer-visible
+  outcome, and its dry-run diff depends on measurement already being trusted.
+- **Suggestions last** — a suggestion engine is only as good as the signals
+  beneath it.
+
+### UI work summary
+
+| Surface | Change | Step |
+|---|---|---|
+| `MatcherEditor` (new, shared) | extracted, reused by routing + experiments | 0 |
+| Route rule **drawer editor** (new) | 7 sections added progressively | 1–6 |
+| Live Monitor | **Provider Health panel** | 2 |
+| Governance | tenant **Constraints editor** | 3 |
+| Errors report | fallback breakdown | 3 |
+| Caching settings | provider affinity card | 4 |
+| Traffic Explorer | affinity state, epoch changes, signal exclusions | 4, 6 |
+| Reports | **Model economics** (new) | 5 |
+| CLEAR Scorecard | **routing eligibility** view | 6 |
+| Registry admin (new) | models, status, windows, pricing | 7 |
+| Policies | **enforcement dry-run diff** | 8 |
+| **Recommendations** (new) | suggestion inbox → experiment or policy draft | 9 |
 
 ## 8. Decisions taken
 
