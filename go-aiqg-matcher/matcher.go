@@ -336,36 +336,34 @@ func pluralise(n int) string {
 }
 
 // ---------------------------------------------------------------------------
-// On engine choice: RE2 here, Hyperscan in Gatekeeper.
+// On engine choice: RE2, by design.
 //
-// These are different jobs, not a capability downgrade, and the distinction is
-// worth recording so nobody "upgrades" this module later and breaks a build.
+// The design specifies RE2 for traffic matching. Hyperscan lives in the proxy
+// layer today (Gatekeeper's content scanner) and is not precluded from the
+// backend — it could be added if a future need justified it. This note records
+// why that need does not arise here, so nobody "upgrades" the module on the
+// assumption that Hyperscan is strictly more capable.
 //
-// Expressiveness is essentially identical. Both RE2 and Hyperscan are
+// EXPRESSIVENESS IS PARITY, not a downgrade. Both RE2 and Hyperscan are
 // automata-based; NEITHER supports backreferences or arbitrary lookaround, for
 // the same reason — those constructs cannot be evaluated in guaranteed linear
 // time. Hyperscan is in places MORE restrictive: it accepts ^ and $ only where
-// they can match at a buffer boundary. So a pattern expressible here is very
-// nearly the set expressible there.
+// they can match at a buffer boundary. A pattern expressible here is very nearly
+// the set expressible there.
 //
-// What Hyperscan buys is throughput on a different shape of problem: scanning
-// one large body against thousands of patterns simultaneously, in streaming
-// mode, with SIMD acceleration. That is exactly Gatekeeper's job — inspecting
-// prompts and completions — and exactly not this one, which evaluates a handful
-// of rules against six short attribute strings.
+// THE PROBLEM SHAPES DIFFER. Hyperscan's advantage is scanning one large body
+// against thousands of patterns simultaneously, in streaming mode, with SIMD —
+// which is Gatekeeper's job. This module evaluates a handful of rules against
+// six short attribute strings, where that advantage does not apply and pure-Go
+// simplicity does.
 //
-// What RE2 buys is that this module stays pure Go. aiqg-dashboard-be builds
-// CGO_ENABLED=0 onto distroless/static; Hyperscan would require CGO, a
-// libhyperscan runtime and a Debian base. That is a large deployment change to
-// buy pattern syntax we already have.
-//
-// The line to hold: if route rules ever need to match on request CONTENT rather
+// THE LINE TO HOLD: if route rules ever need to match on request CONTENT rather
 // than attributes, that is not a bigger regex here — it is a call into the
 // scanner, which already has the content, the engine and the pattern catalogue.
 // Growing this module toward content matching would duplicate Gatekeeper badly.
 //
 // One real papercut, documented rather than solved: a policy pattern and a route
-// matcher are now evaluated by different engines, so a pattern cannot be copied
+// matcher are evaluated by different engines, so a pattern cannot be copied
 // verbatim between them with total confidence. Both reject backreferences, but
 // their anchor handling differs. Anything shared between the two should be
 // tested against both.
