@@ -8,7 +8,7 @@
 service: aiqg-dashboard-be + tas-llm-router
 model: AIQGRoutingDecision
 database: PostgreSQL (aiqg schema)
-version: 0.3.0
+version: 0.4.0
 last_updated: 2026-08-19
 status: proposed (additive; no existing type, endpoint or column changes shape)
 spec_refs: source-spec-v0.2.md §3.5.2 (route-attached policy / resolution order)
@@ -39,7 +39,8 @@ rather than a policy bundle, fixes the order in which the three systems compose,
 collapses the two matcher languages into one (§5), and — new in v0.2 — adopts the
 parts of the load-balancer canon that survive contact with LLM traffic (§3–§4),
 including a first-class treatment of **affinity** (§6), the switching costs that
-make affinity economic (§7), session identity (§8) and cache-key design (§9).
+make affinity economic (§7), session identity (§8), cache-key design (§9), and
+CLEAR measurements fed back as routing inputs (§10).
 
 It is a contract change, not a feature: the point is to settle the seam before
 enforcement (Stage 4.1), fallback policy and the model registry are each built
@@ -510,7 +511,115 @@ answer. Correct, but not worth the special-casing until the simpler rules land.
 
 ---
 
-## 10. Health, budgets and hedging
+## 10. CLEAR as a routing input
+
+We measure the thing nobody routes on. LiteLLM, Portkey, OpenRouter, Kong and
+Cloudflare all select on price, latency and liveness. **None of them route on
+observed quality or observed compliance outcomes**, because none of them compute
+either. We compute both per request and then throw the result at a dashboard.
+
+Closing that loop is the strongest differentiator available here — and the
+measurements below say the signal is not yet fit for it, in three specific ways
+that are all fixable.
+
+### 10.1 What the data actually says
+
+Per-model CLEAR, all traffic to date:
+
+| model | n | efficacy cov. | reliability cov. | efficacy | assurance | reliability | **composite** |
+|---|---|---|---|---|---|---|---|
+| `claude-haiku-4-5` | 1864 | 88% | 88% | 70.2 | 92.6 | 100.0 | 91.3 |
+| `gpt-4o-mini` | 114 | 96% | 100% | 87.9 | 100.0 | 100.0 | 97.6 |
+| `claude-opus-4-6` | 33 | 100% | 100% | **100.0** | **100.0** | **100.0** | **67.0** |
+| `gpt-4o` | 5 | 60% | 60% | 86.7 | 100.0 | 100.0 | 98.4 |
+
+Three hazards fall straight out of it.
+
+**1 — Composite is not comparable across models.** `weights_applied` is
+`equal-weight-non-nil` on **100%** of 2,042 scored events, so composite
+renormalises over whichever dimensions happened to be present. Coverage ranges
+from **60% to 100% depending on the model**. A composite averaged over two
+dimensions and one averaged over five are different quantities wearing the same
+name, and ranking candidates by it compares them anyway.
+
+**2 — Composite is dominated by cost.** `claude-opus-4-6` scores **100 on
+efficacy, assurance and reliability** and lands at **67 composite**. The only
+things that can drag it there are cost and latency. So "route by composite" is
+approximately "route by cost, with the quality dimensions along for the ride" —
+and equal weighting means one dollar trades 1:1 against one quality point, which
+is not a trade any tenant has actually asked for.
+
+**3 — The signal is contaminated by our own traffic.** Efficacy is
+finish-reason-only in the MVP: `stop`/`tool_calls` → 100, **`length` → 60**,
+`content_filter` → 0. Haiku's 70.2 is depressed because this session's
+verification probes ran with `max_tokens` of 5 and 64 and truncated. Routing on
+that today would penalise a model for our test harness. Any use of efficacy for
+routing has to exclude synthetic traffic — which means the demo-flow attribution
+gap (per-flow identity is not stamped on events) is a prerequisite, not a
+nice-to-have.
+
+### 10.2 Design rules
+
+**Route on dimensions, never on composite.** Composite is a reporting artifact
+whose weights are a presentation choice. Routing needs named thresholds against
+named dimensions, so a change in dashboard weighting cannot silently re-route
+production traffic.
+
+**Two loops at two timescales, and do not conflate them.**
+
+| loop | signal | horizon | decides |
+|---|---|---|---|
+| **fast** | 5xx, timeouts, 429 | sub-second | eject / retry / fall back (§10 health) |
+| **slow** | CLEAR aggregates per (model, workflow, tenant) | minutes–days | which candidates are eligible at all |
+
+CLEAR reliability is scored *after* the response and is useless for ejection;
+raw 5xx counting is useless for quality. Each loop needs its own signal.
+
+**Floors and gates, not an optimisation target.** CLEAR dimensions filter the
+candidate set; cost and latency then choose among the survivors. That
+lexicographic shape avoids the 1:1 dollar-versus-quality trade that equal
+weighting imposes, and it degrades safely: with no qualifying data the filter is
+a no-op and behaviour is exactly today's.
+
+```jsonc
+"signals": {
+  "min_efficacy":           70,          // filter, not an objective
+  "max_assurance_severity": "medium",    // any high/critical drops the candidate
+  "min_samples":            200,         // per (model, workflow) before the filter binds
+  "max_staleness":          "24h",
+  "exclude_synthetic":      true,        // demo/experiment traffic must not score a vendor
+  "on_insufficient_data":   "ignore"     // ignore | prefer_measured | fail
+}
+```
+
+**Assurance is the dimension worth routing on first.** It is already bucketed on
+*worst* severity rather than count — the code's own reasoning is that "one
+unauthorized disclosure invalidates otherwise perfect performance" — which makes
+it a natural hard gate rather than a score to average. It also complements
+`constraints` (§11) neatly: constraints express compliance *as declared*,
+assurance expresses compliance *as observed*. A vendor whose outputs keep
+tripping high-severity findings for a tenant should leave that tenant's
+candidate set on evidence, not only on policy.
+
+### 10.3 Two failure modes this creates
+
+**Exploration collapse.** Routing away from a model stops generating data about
+it, so its score freezes at the moment it fell out of favour and it can never
+recover — a one-way door built out of a moving average. The fix is already
+built: **the experiment runner is the designated explorer.** It does sticky
+cohort assignment with traffic caps and auto-stop guardrails, which is exactly a
+bandit's exploration arm. Routing exploits; experiments explore; neither should
+learn from the other's traffic without knowing which it was.
+
+**Goodhart.** Efficacy today is finish-reason; when the judged sub-metrics land
+it becomes a model-scored quantity, and routing to maximise a judge's score
+selects for judge-pleasing answers. Using floors rather than maximisation blunts
+this — a floor is satisfied, not chased — and assurance is comparatively
+resistant because Gatekeeper findings are adversarial rather than preferential.
+
+---
+
+## 11. Health, budgets and hedging
 
 The canon's resilience primitives, translated. All optional; absent means today's
 behaviour.
@@ -544,7 +653,7 @@ Three deliberate choices:
 
 ---
 
-## 11. The contract
+## 12. The contract
 
 ```jsonc
 // POST /internal/policy/resolve → 200
@@ -560,6 +669,9 @@ Three deliberate choices:
   "selection": { "strategy": "expected_cost", "weights": null },
   "switching": { "min_improvement_pct": 25, "dwell": "60s", "warm_cache_bias_pct": 15 },
   "cache":     { "cross_model_reuse": false },   // opt-in; stamps cache_state=cross_model_hit
+  "signals":   { "min_efficacy": 70, "max_assurance_severity": "medium",
+                 "min_samples": 200, "max_staleness": "24h",
+                 "exclude_synthetic": true, "on_insufficient_data": "ignore" },
   "fallback":  { "chain": [ {"provider":"anthropic","model":"claude-haiku-4-5-20251001"},
                             {"provider":"openai","model":"gpt-4o-mini"} ],
                  "on": ["vendor_error","timeout","context_overflow"] },
@@ -582,7 +694,7 @@ aspirational.
 
 ---
 
-## 12. Composition order
+## 13. Composition order
 
 **Resolution decides, experiments overlay, the router executes, enforcement
 applies.** Each stage may only narrow or replace what the previous produced, and
@@ -606,7 +718,7 @@ each stamps its identity on the event.
 - **Global strategy is the floor.** No `target` and no `selection` means exactly
   today's behaviour.
 
-### 12.1 Precedence
+### 13.1 Precedence
 
 | decision | set by | beaten by |
 |---|---|---|
@@ -620,7 +732,7 @@ each stamps its identity on the event.
 
 ---
 
-## 13. Validation Rules
+## 14. Validation Rules
 
 1. `target.provider` must name a configured, enabled provider for the tenant.
 2. Every `fallback.chain` entry must be a valid `(provider, model)` pair and must
@@ -648,7 +760,7 @@ each stamps its identity on the event.
 
 ---
 
-## 14. Gap analysis
+## 15. Gap analysis
 
 | capability | field norm | us today | proposed |
 |---|---|---|---|
@@ -665,6 +777,7 @@ each stamps its identity on the event.
 | Switch hysteresis / flap damping | Envoy dwell + slow start | none — cost strategy may move on any delta | `switching` |
 | Session identity for affinity | LB cookie rotation | none | `epoch` (§8) |
 | Cache-key normalisation | standard practice | ad hoc per cache | §9 rules |
+| **Quality/compliance-outcome routing** | **nobody — none of them measure it** | computed per request, used only for dashboards | `signals` (§10) |
 | Quality-based routing | RouteLLM cascades | none | *out of scope — noted* |
 
 Two are deliberately **not** proposed. Token-based rate limiting belongs with
@@ -674,7 +787,7 @@ the same gate as enforcement.
 
 ---
 
-## 15. Migration Strategy
+## 16. Migration Strategy
 
 **Step 0 — unify the matcher (§5).** Extract the shared evaluator, rewrite the 9
 stored cohorts, delete the second implementation. First, because every later step
@@ -702,6 +815,11 @@ so it can land before `p2c_ewma`, which needs step 2's health data. Ship
 `switching` in the same step: an `expected_cost` router without hysteresis is
 precisely the flapping cost machine §7 describes.
 
+**Step 5b — `signals` (§10).** Needs three fixes first, in order: stop routing
+on composite, exclude synthetic traffic from the aggregates (which needs demo-flow
+attribution on events), and land per-dimension sample floors. Assurance first —
+it is already a hard-gate shape.
+
 **Step 6 — `limits`.** Waits on the model registry (#2–#6).
 
 **Step 7 — `enforcement`.** Stage 4.1, last: the only stage that changes a
@@ -711,7 +829,7 @@ Every step is additive per build-vs-reuse §1.2.
 
 ---
 
-## 16. Open Questions
+## 17. Open Questions
 
 1. **Does an experiment's model swap survive a fallback?** Attribution says leave
    the experiment and mark it abandoned; continuity says stay. Now sharper: a
@@ -733,13 +851,16 @@ Every step is additive per build-vs-reuse §1.2.
 7. **Where does the verbosity table live?** Computed in dashboard-be from events
    and shipped on the decision keeps the gateway stateless; computed in the
    gateway is fresher but makes two services disagree about price.
-8. **Does `switching.dwell` apply across a fallback?** A failover is not a price
+8. **Should composite ever be routable**, with explicit weights per tenant, or is
+   the lexicographic floors-then-cost shape the whole answer? Weights are what a
+   customer asks for and what makes a dollar trade against a quality point.
+9. **Does `switching.dwell` apply across a fallback?** A failover is not a price
    decision, so it probably should not count against the dwell timer — otherwise
    an outage pins you to a degraded provider.
 
 ---
 
-## 17. Risks
+## 18. Risks
 
 - **Route-rule matching is barely exercised.** One production tenant has a rule, it
   is match-all, and matching was proven by calling the resolver directly rather than
@@ -762,13 +883,18 @@ Every step is additive per build-vs-reuse §1.2.
   `single_turn_qa` says nothing about `rag`, and a prompt-template change can
   move it overnight. The table needs a decay window and a staleness alarm, or it
   becomes a confidently wrong price list.
+- **Routing on CLEAR creates a one-way door unless exploration is explicit.** A
+  model routed away from stops being measured and can never recover. The
+  experiment runner has to be the designated explorer, and its traffic has to be
+  excluded from the aggregates it feeds — otherwise exploitation contaminates
+  exploration and the loop closes on itself.
 - **This adds surface to a component that is already three systems.** Mitigation:
   every field is optional and absent means today's behaviour. The residual risk is
   that "optional" becomes "undocumented default nobody understands".
 
 ---
 
-## 18. Related Documentation
+## 19. Related Documentation
 
 - [[route-rule]] — matcher schema, resolution order, Phase-2 placeholders
 - [[policy-bundle]] · [[policy-rule]] — bundle contents and rule actions
