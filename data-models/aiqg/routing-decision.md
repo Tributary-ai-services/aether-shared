@@ -290,6 +290,8 @@ populate.
 
 ### 5.6 Session `epoch` — when a session really changed
 
+> **Detailed specification:** [[cache-keys-and-sessions]] §4.
+
 Long sessions wander across topics, but the three senses of "changed" have three
 different answers, and only one involves topics:
 
@@ -377,6 +379,9 @@ perfect performance" — so it is already gate-shaped, and it complements
 `constraints` exactly.
 
 ### 5.9 Cache keys — three caches, three keys
+
+> **Detailed specification:** [[cache-keys-and-sessions]] covers key construction,
+> normalisation rules, the epoch model, storage, edge cases and a test plan.
 
 | cache | key today | TTL | store |
 |---|---|---|---|
@@ -750,6 +755,7 @@ production use of efficacy must exclude synthetic traffic first.
 
 ## Appendix D — Related documentation
 
+- [[cache-keys-and-sessions]] — key construction and session identity in detail
 - [[route-rule]] · [[policy-bundle]] · [[policy-rule]] · [[experiment]] · [[extraction-policy]]
 - `tas-llm-router` #2–#6 (model registry) · #100 (`cache_control` dropped)
 - `AIQG_COMPETITIVE_LANDSCAPE.md` — scoring and inline-security competitive set
