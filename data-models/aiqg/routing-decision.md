@@ -81,6 +81,12 @@ bundle-only shape, and would then have to be reworked when it grows.
 
 ## 3. The evidence
 
+> **Later measurements that changed the design live in
+> [`routing-measurements.md`](./routing-measurements.md)** — including the
+> discovery that our own verification probes were the only `gpt-4o-mini` traffic
+> in the store, and that 47% of responses are truncated at `max_tokens`. Read
+> that before trusting any default derived from event data.
+
 Every figure below is measured on our own system. Method and queries in
 Appendix C.
 
