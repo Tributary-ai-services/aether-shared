@@ -127,7 +127,38 @@ before anyone uses probe data to decide on `auto`.**
 
 ---
 
-## 5. Where the verbosity table lives — open question 6, settled
+## 5. Synthetic traffic inflates QUALITY too, in the same direction as cost
+
+**Measured 2026-08-21, 30-day window**, with and without the synthetic denylist:
+
+| model | n (all) | efficacy (all) | assurance (all) | n (real) | efficacy | assurance |
+|---|---:|---:|---:|---:|---:|---:|
+| claude-haiku-4-5 | 562 | 81 | 97 | 73 | 84 | **87** |
+| gpt-4o-mini | 23 | **96** | **100** | **0** | — | — |
+
+Every `gpt-4o-mini` quality score came from probes that asked for the single word
+"ok", finished with `stop` — scoring 100 on a finish-reason-only efficacy metric
+— and contained nothing to redact, so they scored perfectly on assurance too.
+Haiku's assurance falls **97 → 87** once real traffic is isolated.
+
+**Why this is the dangerous shape.** Combined with §1, our own test traffic makes
+a model look **both cheaper and better**. The two biases point the *same way*, so
+an unguarded router would conclude that whatever we test with most is
+simultaneously the cheapest and the highest-quality option available, and send it
+everything. Independent biases would partly cancel; these compound.
+
+**What changed.** `exclude_synthetic` defaults **on** for quality aggregates, not
+just verbosity. The sample floor (200) means nothing clears it on current volume,
+so gating is a no-op — the correct state for a control whose evidence does not
+yet exist.
+
+**Also worth noting:** efficacy coverage is only **70%** (51 of 73 real events
+carry a score). A mean over 70% coverage is a different claim from one over 100%,
+so coverage travels with the aggregate rather than being folded into it.
+
+---
+
+## 6. Where the verbosity table lives — open question 6, settled
 
 **dashboard-be measures the TOKENS; the gateway applies the PRICES.**
 

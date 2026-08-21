@@ -81,6 +81,9 @@ bundle-only shape, and would then have to be reworked when it grows.
 
 ## 3. The evidence
 
+> **Decisions taken while building this, each with what would reverse it, are in
+> [`routing-decisions-log.md`](./routing-decisions-log.md).**
+>
 > **Later measurements that changed the design live in
 > [`routing-measurements.md`](./routing-measurements.md)** — including the
 > discovery that our own verification probes were the only `gpt-4o-mini` traffic
