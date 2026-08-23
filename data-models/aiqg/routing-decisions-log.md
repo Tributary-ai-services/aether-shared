@@ -351,7 +351,7 @@ was nothing to implement against.
 
 **Why.** Rather than invent a taxonomy, each candidate was checked against
 production on 2026-08-22 for whether it could produce a defensible verdict. One
-fires (HIPAA, 38 governed findings), one is configuration-only, and one abstains
+fires (HIPAA, 48 governed findings), one is configuration-only, and one abstains
 because the verbosity table holds 4 rows against a floor of 100.
 
 **What would change it.** New conditions as new data becomes trustworthy — the
@@ -387,8 +387,8 @@ not disappear.
 bundle has an **enabled, non-`log`** rule for.
 
 **Why.** HIPAA's tenant produced 36 `aiqg-bloated-context` findings in the
-window, all governed by `log` rules. Counting them would have advertised 74
-findings where enforcing touches 38. Evidence that overstates the case is how an
+window, all governed by `log` rules. Counting them would have advertised 84
+findings where enforcing touches 48. Evidence that overstates the case is how an
 inbox stops being read.
 
 **What would change it.** Nothing — but note the corollary: a bundle whose acting
