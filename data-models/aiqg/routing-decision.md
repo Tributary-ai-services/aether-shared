@@ -625,7 +625,7 @@ could produce a defensible verdict against real data on 2026-08-22.
 
 | Condition | Fires when | Data it needs | Status on that date |
 |---|---|---|---|
-| `findings_not_acted_on` | A bundle in `observe` has enabled block/redact rules, and ≥5 findings matched *those* rules in the window | Bundles, rules, scan findings | **Fires** — HIPAA, 38 governed findings over 30 days |
+| `findings_not_acted_on` | A bundle in `observe` has enabled block/redact rules, and ≥5 findings matched *those* rules in the window | Bundles, rules, scan findings | **Fires** — HIPAA, 48 governed findings over 30 days |
 | `pin_without_fallback` | An enabled route rule sets `provider_override` with no fallback chain | Route rules only | Configuration-only; fires whenever the shape exists |
 | `cheaper_model_available` | Two or more model/workflow pairs clear the verbosity sample floor and one is cheaper | `aiqg.model_verbosity` | **Abstains** — 0 of 2 pairs clear the floor of 100 |
 
@@ -642,7 +642,7 @@ conditions could not run.
 **Only governed findings count.** `findings_not_acted_on` counts findings for
 patterns the bundle has an *acting* rule for. HIPAA's tenant produced 36
 `aiqg-bloated-context` findings in the window, all governed by `log` rules;
-counting them would have advertised 74 findings where enforcing would touch 38.
+counting them would have advertised 84 findings where enforcing would touch 48.
 Overstated evidence is how an inbox loses its reader.
 
 **Synthetic traffic is excluded from the count.** Our own probes would otherwise
