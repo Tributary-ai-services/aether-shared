@@ -610,12 +610,55 @@ rules is rejected; the dry-run diff matches actual enforcement when enabled.
 
 | Repo | Work |
 |---|---|
-| **aiqg-dashboard-be** | Suggestion engine evaluating computable conditions over existing events (cost, quality, policy classes per §10.4); suggestion store with evidence and provenance. |
-| **aiqg-ui** | **New “Recommendations” surface** — an inbox of suggestions, each showing the condition, the evidence, and the affected traffic, with two actions: *run as experiment* (creates a dry-run experiment pre-filled from the suggestion) and *draft policy* (opens the bundle editor pre-filled). AI-generated explanations render as drafts with provenance shown. Nothing applies without review. |
+| **aiqg-dashboard-be** | Suggestion engine evaluating computable conditions over existing configuration and events; suggestion store with evidence and provenance. |
+| **aiqg-ui** | **New “Recommendations” surface** — an inbox of suggestions, each showing the condition, the evidence, and the affected traffic. Accepting records a decision and names the review that precedes the change; AI-generated explanations render as drafts with provenance shown. Nothing applies without review. |
 
 **Acceptance** — a detected condition produces a suggestion carrying its
-evidence; accepting one creates a `dry_run` experiment; no suggestion can
+evidence; accepting one leads to the dry run for that change; no suggestion can
 activate a change without human approval.
+
+#### The conditions (§10.4 was never written — these replace the forward reference)
+
+The plan referred to "policy classes per §10.4", but §10.4 does not exist. Rather
+than invent a taxonomy, the conditions below were chosen by measuring which ones
+could produce a defensible verdict against real data on 2026-08-22.
+
+| Condition | Fires when | Data it needs | Status on that date |
+|---|---|---|---|
+| `findings_not_acted_on` | A bundle in `observe` has enabled block/redact rules, and ≥5 findings matched *those* rules in the window | Bundles, rules, scan findings | **Fires** — HIPAA, 38 governed findings over 30 days |
+| `pin_without_fallback` | An enabled route rule sets `provider_override` with no fallback chain | Route rules only | Configuration-only; fires whenever the shape exists |
+| `cheaper_model_available` | Two or more model/workflow pairs clear the verbosity sample floor and one is cheaper | `aiqg.model_verbosity` | **Abstains** — 0 of 2 pairs clear the floor of 100 |
+
+Three design points that came out of building it:
+
+**Abstention is a reported outcome, not silence.** Every condition returns
+`fired`, `clear`, or `insufficient_evidence`, and the last is rendered with what
+it would need. A suggestion engine that quietly skipped the cost check would look
+identical to one that ran it and found nothing to save — and an operator would
+reasonably conclude their routing was already optimal. The measurement above is
+the reason this is not hypothetical: on the day it shipped, the majority of
+conditions could not run.
+
+**Only governed findings count.** `findings_not_acted_on` counts findings for
+patterns the bundle has an *acting* rule for. HIPAA's tenant produced 36
+`aiqg-bloated-context` findings in the window, all governed by `log` rules;
+counting them would have advertised 74 findings where enforcing would touch 38.
+Overstated evidence is how an inbox loses its reader.
+
+**Synthetic traffic is excluded from the count.** Our own probes would otherwise
+argue for enforcing against themselves — the same class of error as the
+`gpt-4o-mini` probe pollution recorded in `routing-measurements.md`.
+
+**Why the engine holds no failure of its own.** One broken condition is isolated
+into `errored` and reported separately from `abstained`: "we could not look" and
+"looking broke" call for different responses, one a data problem and the other a
+defect. An inbox that empties because a single query regressed is worse than one
+that shows what it could and says what it could not.
+
+**Why there is no apply endpoint.** Accepting a suggestion sets its status and
+returns the next step in words. A test asserts the route does not exist, so
+adding one is a deliberate act someone has to justify against the acceptance
+criterion above.
 
 ---
 
