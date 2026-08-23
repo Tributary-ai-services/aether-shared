@@ -340,6 +340,96 @@ sensible default — which is a per-feature judgement, not a blanket one.
 
 ---
 
+## 10. Suggestions (step 9)
+
+### 10.1 The conditions were chosen by measuring which ones could fire
+
+**Decision.** Three conditions ship: `findings_not_acted_on`,
+`pin_without_fallback`, `cheaper_model_available`. The plan's forward reference to
+"policy classes per §10.4" pointed at a section that was never written, so there
+was nothing to implement against.
+
+**Why.** Rather than invent a taxonomy, each candidate was checked against
+production on 2026-08-22 for whether it could produce a defensible verdict. One
+fires (HIPAA, 38 governed findings), one is configuration-only, and one abstains
+because the verbosity table holds 4 rows against a floor of 100.
+
+**What would change it.** New conditions as new data becomes trustworthy — the
+model registry (blocked on issues #2–#6) unlocks capability-based advice, and the
+quality table clearing its floor of 200 unlocks quality-based advice.
+
+⚖️ **Close call.** Shipping `cheaper_model_available` knowing it cannot fire. The
+alternative — omit it until the data exists — would have left the surface looking
+like it had checked cost and found nothing. An operator would then never learn
+that sending more traffic is what unlocks the advice.
+
+---
+
+### 10.2 Abstention is a reported outcome, not silence
+
+**Decision.** Conditions return `fired` / `clear` / `insufficient_evidence`, and
+the third renders in the UI with the condition's `Requires()` text.
+
+**Why.** "We have no suggestions" and "we could not evaluate three of five
+conditions" are different facts, and only one of them is reassuring. This is the
+same discipline the verbosity and quality work already earned: a measurement
+below its floor must say so rather than silently degrade to a guess.
+
+**What would change it.** Nothing foreseeable. If conditions ever outnumber what
+fits on a screen, the abstentions collapse into a count that expands — they do
+not disappear.
+
+---
+
+### 10.3 Only governed findings count toward the evidence
+
+**Decision.** `findings_not_acted_on` counts findings only for patterns the
+bundle has an **enabled, non-`log`** rule for.
+
+**Why.** HIPAA's tenant produced 36 `aiqg-bloated-context` findings in the
+window, all governed by `log` rules. Counting them would have advertised 74
+findings where enforcing touches 38. Evidence that overstates the case is how an
+inbox stops being read.
+
+**What would change it.** Nothing — but note the corollary: a bundle whose acting
+rules govern nothing that fired stays `clear`. Compliance is in exactly that
+state today (1 finding on its tenant, `aiqg-bloated-context`, which it logs), so
+it correctly produces no advice.
+
+---
+
+### 10.4 Accepting is a decision, not an action
+
+**Decision.** No apply endpoint. Accepting sets status, records who and when, and
+returns the next step in words. A test asserts `/suggestions/:id/apply` does not
+exist.
+
+**Why.** The step's acceptance criterion is that no suggestion can activate a
+change without human approval. A system that can act on its own advice is one
+nobody can hand to a compliance officer — and the enforcement dry run already
+exists to make the change reviewable before it is made.
+
+**What would change it.** Nothing at this layer. If an "apply" is ever wanted it
+belongs behind the dry run, as a confirmed action on a screen showing projected
+impact — not as a button on a recommendation card.
+
+---
+
+### 10.5 A dismissed suggestion is never resurrected
+
+**Decision.** The store's natural key is `(tenant, condition, subject)`. Re-running
+refreshes evidence in place; `dismissed` and `accepted` keep their status.
+
+**Why.** Dismissal has to mean something. A condition that keeps holding would
+otherwise re-open its suggestion on every evaluation, and an inbox that ignores
+your decisions is one you learn to ignore back.
+
+**What would change it.** A "snooze until conditions change materially" would be
+a better third option than the current binary, if operators start dismissing
+things they actually intend to revisit. Review when dismissals outnumber accepts.
+
+---
+
 ## Open, unresolved
 
 | # | Question | Blocked on |
@@ -352,3 +442,4 @@ sensible default — which is a per-feature judgement, not a blanket one.
 | — | Errors-page fallback breakdown | Chain position/reason into Timescale |
 | — | Prompt-cache `auto` placement engine (P2) | Probe blind spot (§4 of measurements) |
 | — | Route-level `prompt_cache` config | Mode is header + global only |
+| — | Condition set beyond the three that ship | Model registry #2–#6; quality table clearing its floor of 200 |
