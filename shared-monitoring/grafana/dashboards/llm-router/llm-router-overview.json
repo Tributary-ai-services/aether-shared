@@ -636,13 +636,13 @@
       "pluginVersion": "9.5.2",
       "targets": [
         {
-          "expr": "llm_router_rate_limit_usage{service=\"llm-router\"}",
+          "expr": "sum by (tier) (rate(llm_router_rate_limit_hits_total{service=\"llm-router\"}[5m]))",
           "interval": "",
           "legendFormat": "{{provider}}",
           "refId": "A"
         }
       ],
-      "title": "Rate Limit Usage",
+      "title": "Rate Limit Rejections (per sec, by tier)",
       "type": "gauge"
     },
     {
