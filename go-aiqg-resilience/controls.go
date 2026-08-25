@@ -23,12 +23,34 @@ type Controls struct {
 	// AffinityEnabled toggles provider affinity (warm-cache stickiness) for the
 	// tenant's traffic.
 	AffinityEnabled *bool `json:"affinity_enabled,omitempty"`
+	// BreakerIsolated, when true, gives the tenant its OWN breaker keyspace:
+	// a provider tripping under this tenant's traffic ejects it only for this
+	// tenant, and this tenant's selection is unaffected by other tenants'
+	// failures. When nil/false the tenant shares the fleet-wide breaker state
+	// (the default), so a provider genuinely down is avoided for everyone.
+	//
+	// Isolation is an economic/blast-radius choice, not a compliance one:
+	// isolation trades a shared, cheaply-cached ejection view for a per-tenant
+	// one that must be read from the store per request.
+	BreakerIsolated *bool `json:"breaker_isolated,omitempty"`
 }
 
-// IsZero reports whether the tenant expressed no preference on either feature,
-// so a resolver can omit the block rather than send an empty object that would
-// read as deliberate configuration.
-func (c Controls) IsZero() bool { return c.BreakerEnabled == nil && c.AffinityEnabled == nil }
+// IsZero reports whether the tenant expressed no preference on any feature, so a
+// resolver can omit the block rather than send an empty object that would read
+// as deliberate configuration.
+func (c Controls) IsZero() bool {
+	return c.BreakerEnabled == nil && c.AffinityEnabled == nil && c.BreakerIsolated == nil
+}
+
+// BreakerIsolatedOr resolves the effective breaker-isolation setting, folding
+// the tenant's preference over the gateway default (shared). A nil pointer (no
+// preference) yields def.
+func (c Controls) BreakerIsolatedOr(def bool) bool {
+	if c.BreakerIsolated != nil {
+		return *c.BreakerIsolated
+	}
+	return def
+}
 
 // BreakerEnabledOr resolves the effective breaker enablement, folding the
 // tenant's preference over the gateway default. A nil pointer (no preference)
