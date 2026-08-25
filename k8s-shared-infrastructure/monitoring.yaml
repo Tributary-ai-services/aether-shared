@@ -381,6 +381,115 @@ data:
                 of the daily cap. It will stop grading when the cap is reached and resume at
                 UTC midnight.
 
+  # Availability and quality alerting for tas-llm-router.
+  #
+  # Before these existed, the only alerts touching this service covered the
+  # semantic-cache judge's spend budget — nothing paged when the router itself
+  # was down or failing requests.
+  #
+  # Every expression below is built on a signal verified live on 2026-08-24:
+  # `up` (produced by Prometheus itself) and the `aiqg_*` family served from
+  # /aiqg/metrics. Deliberately NOT used: the `llm_router_*` family on /metrics,
+  # which serves static placeholder values (counters did not move across repeated
+  # scrapes; auth_attempts_total reads 1.43e9; real 401s absent from
+  # errors_total). Any rate() over those metrics is 0 forever, so an alert built
+  # on them would never fire while looking like coverage.
+  llm-router-availability-alerts.yml: |
+    groups:
+      - name: llm_router_availability
+        interval: 30s
+        rules:
+          # Total outage. Both scrape jobs cover the same pods, so either going
+          # fully dark means no replica is serving.
+          - alert: LLMRouterAllReplicasDown
+            expr: sum by (job) (up{job=~"llm-router|aiqg-metrics"}) == 0
+            for: 2m
+            labels:
+              severity: critical
+              service: tas-llm-router
+              component: availability
+            annotations:
+              summary: "tas-llm-router has no reachable replica (job {{ $labels.job }})"
+              description: >
+                Every scrape target for {{ $labels.job }} has been down for 2m. All
+                text generation across TAS is failing: Aether chat, agent execution,
+                workflow model steps, and AIQG scanning. Document upload, search and
+                the graph database are unaffected. Runbook: docs/ops/llm-router.md
+                in tas-llm-router.
+
+          # Partial loss. Two replicas per deployment, so one down is degraded
+          # rather than an outage — but on a single node it is also the shape a
+          # BestEffort eviction takes.
+          - alert: LLMRouterReplicaDown
+            expr: up{job=~"llm-router|aiqg-metrics"} == 0
+            for: 5m
+            labels:
+              severity: warning
+              service: tas-llm-router
+              component: availability
+            annotations:
+              summary: "tas-llm-router replica {{ $labels.instance }} unreachable for 5m"
+              description: >
+                Scrape target {{ $labels.instance }} ({{ $labels.job }}) has been down
+                for 5m while others still respond. Check for eviction — llm-router-aiqg
+                is BestEffort and is evicted first under node pressure, and node
+                um773dev was at 92% memory requests on 2026-08-24.
+
+          # Request quality degrading. `tier` carried only "healthy" at authoring
+          # time; matching tier!="healthy" means this stays silent until a
+          # non-healthy tier actually appears rather than guessing its name.
+          - alert: AIQGRequestTierDegraded
+            expr: sum by (dimension) (rate(aiqg_request_tier_total{tier!="healthy"}[15m])) > 0
+            for: 10m
+            labels:
+              severity: warning
+              service: tas-llm-router
+              component: aiqg-quality
+            annotations:
+              summary: "AIQG {{ $labels.dimension }} tier non-healthy for 10m"
+              description: >
+                Requests have been scored outside the healthy tier on the
+                {{ $labels.dimension }} dimension for 10m. This is a quality signal,
+                not an availability one — the gateway is serving, but assurance,
+                latency, or composite scoring has degraded.
+
+          # Telemetry loss. Every AIQG event feeds spend attribution and the
+          # dashboard; silent emitter failure means the record is wrong, and
+          # nothing else reports it.
+          - alert: AIQGEventEmissionFailing
+            expr: sum by (emitter) (rate(aiqg_events_emitted_total{outcome!="success"}[10m])) > 0
+            for: 10m
+            labels:
+              severity: warning
+              service: tas-llm-router
+              component: aiqg-telemetry
+            annotations:
+              summary: "AIQG event emission failing via {{ $labels.emitter }}"
+              description: >
+                The {{ $labels.emitter }} emitter has been returning non-success
+                outcomes for 10m. AIQG events feed spend attribution and the dashboard,
+                so this loses records without failing user requests. For the kafka
+                emitter, check kafka-shared.tas-shared:9092 before suspecting the router.
+
+          # Kafka emit latency sits in the request path; sustained p95 above a
+          # second indicates broker trouble rather than a router fault.
+          - alert: AIQGEmitLatencyHigh
+            expr: >
+              histogram_quantile(0.95,
+                sum by (le, emitter) (rate(aiqg_emit_duration_seconds_bucket{emitter="kafka"}[10m]))
+              ) > 1
+            for: 10m
+            labels:
+              severity: warning
+              service: tas-llm-router
+              component: aiqg-telemetry
+            annotations:
+              summary: "AIQG kafka emit p95 above 1s"
+              description: >
+                p95 emit duration to the kafka emitter has exceeded 1s for 10m
+                (observed mean was ~0.2s on 2026-08-24). Investigate
+                kafka-shared.tas-shared:9092 first.
+
 ---
 # OpenTelemetry Collector Deployment
 apiVersion: apps/v1
