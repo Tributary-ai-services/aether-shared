@@ -40,6 +40,12 @@ spec:
           mountPath: /etc/alertmanager
         - name: alertmanager-data
           mountPath: /alertmanager
+        # The relay password is a Secret mounted as a file and referenced via
+        # smtp_auth_password_file. The alertmanager config lives in a ConfigMap,
+        # which is not a place for a credential.
+        - name: alertmanager-smtp
+          mountPath: /etc/alertmanager/smtp
+          readOnly: true
         livenessProbe:
           httpGet:
             path: /-/healthy
@@ -59,6 +65,9 @@ spec:
       - name: alertmanager-data
         persistentVolumeClaim:
           claimName: alertmanager-shared-pvc
+      - name: alertmanager-smtp
+        secret:
+          secretName: alertmanager-smtp
 
 ---
 apiVersion: v1
@@ -104,38 +113,53 @@ metadata:
 data:
   alertmanager.yml: |
     global:
-      smtp_smarthost: 'localhost:587'
-      smtp_from: 'alertmanager@tas.yourdomain.com'
-      smtp_auth_username: ''
-      smtp_auth_password: ''
-      smtp_require_tls: false
+      # Same Brevo relay and sender the AIQG daily activity digest already
+      # uses (aiqg-dashboard-be-config), so alerting rides a mail path that
+      # is known to deliver rather than a second, untested one.
+      smtp_smarthost: 'smtp-relay.brevo.com:587'
+      smtp_from: 'aiqg@air-ops.net'
+      smtp_auth_username: 'b571d7001@smtp-brevo.com'
+      smtp_auth_password_file: '/etc/alertmanager/smtp/SMTP_PASSWORD'
+      smtp_require_tls: true
 
     route:
       group_by: ['alertname']
-      group_wait: 10s
-      group_interval: 10s
-      repeat_interval: 1h
-      receiver: 'web.hook'
+      group_wait: 30s
+      group_interval: 5m
+      # 1h was fine for a receiver that discarded everything. Against a real
+      # inbox it means a single unresolved alert mails you 24 times a day, and
+      # an operator who filters the noise stops reading the signal.
+      repeat_interval: 12h
+      receiver: 'email-ops'
+
+      routes:
+      # Critical pages faster and repeats more often than the default.
+      - matchers:
+          - severity = "critical"
+        receiver: 'email-ops'
+        group_wait: 10s
+        repeat_interval: 2h
 
     receivers:
-    - name: 'web.hook'
-      webhook_configs:
-      - url: 'http://127.0.0.1:5001/'
+    - name: 'email-ops'
+      email_configs:
+      - to: 'john@scharber.com'
         send_resolved: true
+        headers:
+          Subject: '[TAS {{ .Status | toUpper }}] {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
+        # Plain text: an on-call engineer reads this on a phone, and the
+        # annotations already carry the runbook pointer.
+        text: |
+          {{ .Status | toUpper }} — {{ .GroupLabels.alertname }}
 
-    # Email notifications (uncomment and configure as needed)
-    # - name: 'email-notifications'
-    #   email_configs:
-    #   - to: 'admin@yourdomain.com'
-    #     subject: 'TAS Alert: {{ .GroupLabels.alertname }}'
-    #     body: |
-    #       {{ range .Alerts }}
-    #       Alert: {{ .Annotations.summary }}
-    #       Description: {{ .Annotations.description }}
-    #       Details:
-    #       {{ range .Labels.SortedPairs }} - {{ .Name }} = {{ .Value }}
-    #       {{ end }}
-    #       {{ end }}
+          {{ range .Alerts }}
+          Summary:  {{ .Annotations.summary }}
+          Detail:   {{ .Annotations.description }}
+          Severity: {{ .Labels.severity }}
+          Service:  {{ .Labels.service }}{{ if .Labels.instance }}
+          Instance: {{ .Labels.instance }}{{ end }}
+          Started:  {{ .StartsAt }}
+          {{ end }}
 
     # Slack notifications (uncomment and configure as needed)
     # - name: 'slack-notifications'
