@@ -8,6 +8,29 @@ metadata:
     component: monitoring
 spec:
   replicas: 1
+  # Recreate, not RollingUpdate. Alertmanager writes its silences and nflog
+  # snapshot on shutdown and reads it at startup. With maxSurge the replacement
+  # pod starts while the old one is still running, so it loads the previous
+  # (stale) snapshot and the old pod's save lands afterwards, unread -- silences
+  # and notification-dedup state are lost on every restart. Observed directly:
+  # a silence created before a rolling restart was gone after it, while the
+  # snapshot file on disk had been written a few seconds too late to be read.
+  #
+  # One replica on a ReadWriteOnce volume cannot meaningfully roll anyway; the
+  # cost is a few seconds without alerting during a restart.
+  #
+  # maxSurge: 0 rather than strategy: Recreate. Both stop the overlap, but
+  # Recreate waits for EVERY pod matching the selector to disappear before
+  # scaling up -- including pods stuck in a terminal phase. This deployment had
+  # three Succeeded pods lingering from 2025, and switching to Recreate
+  # deadlocked on them: all ReplicaSets sat at 0 while the deployment wanted 1,
+  # and alertmanager stayed down until those pods were deleted. maxSurge: 0 with
+  # maxUnavailable: 1 sequences the same way without that failure mode.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: alertmanager-shared
@@ -17,6 +40,34 @@ spec:
         app: alertmanager-shared
         component: monitoring
     spec:
+      # prom/alertmanager runs as uid 65534 (nobody), but this PVC was
+      # provisioned root:root 0755, so alertmanager could not write its silences
+      # or nflog snapshots -- "permission denied" continuously since the volume
+      # was created in Dec 2025.
+      #
+      # fsGroup alone does NOT fix it here. This is a `local` PV backed by
+      # /var/lib/rancher/k3s/storage on the node; setting fsGroup: 65534 and
+      # restarting left the directory owned 0:0 and still unwritable, verified
+      # by testing after the rollout. fsGroup is kept because it governs the
+      # group of files the container creates from now on, but the existing
+      # directory needs an explicit chown, which is what the init container does.
+      #
+      # Only this workload needs this. prometheus-shared runs as the same uid
+      # with no fsGroup and works, because its directory happened to be created
+      # owned by 65534; grafana, loki and redis each match their own runtime
+      # user. Applying this fleet-wide would rewrite ownership on the loki,
+      # minio and ollama volumes to fix nothing.
+      securityContext:
+        fsGroup: 65534
+      initContainers:
+      - name: fix-data-permissions
+        image: busybox:1.36
+        command: ['sh', '-c', 'chown -R 65534:65534 /alertmanager && chmod 0755 /alertmanager']
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: alertmanager-data
+          mountPath: /alertmanager
       containers:
       - name: alertmanager
         image: prom/alertmanager:latest
