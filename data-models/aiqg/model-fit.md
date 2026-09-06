@@ -394,6 +394,8 @@ Four properties, each preventing a specific failure: it **suggests a test, never
 
 **The price join (G4) — DECIDED: a separate `/v1/pricing` endpoint on the gateway.** Not an extension of `/v1/models`, which stock OpenAI and Anthropic SDKs consume and whose response shape must stay exactly what those clients expect. `/v1/pricing` serves per-model input, output, cache-read and cache-write rates, a currency, and an **effective date plus a price version**.
 
+> **Corrected 2026-09-05.** An earlier draft of this section said the gateway *must publish prices*, implying they are unavailable. They are not: `GET /v1/capabilities` already returns `input_cost_per_1k` and `output_cost_per_1k` per model, and `aiqg-ui`'s `fetchModelPrices` already reads it — Model Economics joins backend tokens against gateway prices client-side today. The decision stands for a narrower reason: **not to expose prices, but to version and effective-date them.** See [`model-fit-ui.md`](./model-fit-ui.md) §5.
+
 That version is not bookkeeping. A cost delta computed last month must be recomputable, and prices move — so `model_workload_fit` records the `price_version` a figure was priced against, and a verdict citing a saving can say which price table produced it. Without that, a re-run months later silently disagrees with the number the customer approved.
 
 dashboard-be consumes it through the existing catalogue fetcher (`provider_catalogue.go`), inheriting its degradation posture: a cached table is used past its refresh interval if a refresh fails, and if there is no cached table at all the candidate comparison **abstains rather than guessing**. Prices stay owned by the gateway; the backend reads and never stores them as truth.
