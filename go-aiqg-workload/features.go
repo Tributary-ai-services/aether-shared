@@ -383,3 +383,15 @@ func (f Features) DominantFamily() (ToolFamily, float64) {
 	}
 	return best, float64(bestN) / float64(f.ToolCount)
 }
+
+// FamilyShare is the fraction of this turn's tool calls in one family.
+//
+// Explicit per-family shares exist so a rule never has to route through
+// DominantFamily, whose tie-break precedence is a deliberate determinism
+// device and a poor premise for a classification rule.
+func (f Features) FamilyShare(fam ToolFamily) float64 {
+	if f.ToolCount == 0 {
+		return 0
+	}
+	return float64(f.FamilyMix[fam]) / float64(f.ToolCount)
+}
