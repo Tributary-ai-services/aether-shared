@@ -104,3 +104,36 @@ The P1 question was *"which coding tasks does our own spend go to, and where do 
 ## Caveats
 
 Single developer, near-single model, so cross-model discrimination is untested — that needs the gateway or a second model's traces. The 0.98 rates are one model's competence, not a benchmark. `session_completed` is absent from the table because these sessions commit through a shell in ways the commit cue sees inconsistently; it needs work before it is trustworthy.
+
+---
+
+# Segment roll-up — choosing the rule by measurement
+
+**Date:** 2026-09-07 · **Corpus:** SWE-chat, 34,036 segments re-extracted at per-turn granularity
+
+The earlier validation found the turn threshold was wrong for the segment unit and said the fix was a roll-up rather than a tuned threshold. Rather than pick one, both candidates were implemented and measured on the same labelled data.
+
+| `prompt_intent` | n | flat (one observation) | plurality | **precedence** |
+|---|---:|---:|---:|---:|
+| `git` | 6,164 | 73.7% | **83.4%** | 67.2% |
+| `create new code` | 5,386 | 7.3% | 18.2% | **65.4%** |
+| `understand` | 4,983 | 28.6% | **43.2%** | 21.2% |
+| `refactor` | 3,160 | 14.6% | 25.4% | **78.6%** |
+| `test` | 1,607 | 25.3% | **43.3%** | 21.7% |
+| **overall** | **21,300** | **33.9%** | **45.9%** | **54.2%** |
+
+**Both roll-ups beat the flat approach decisively** — 33.9% → 45.9% / 54.2%. The unit mismatch was the dominant error, exactly as the earlier validation argued.
+
+**Precedence wins overall and is not uniformly better.** It gains enormously on edit intents (refactor 25.4% → 78.6%, create 18.2% → 65.4%) and loses on non-edit ones (git 83.4% → 67.2%), because an agent that edits incidentally while running commands has its segment renamed a modification. It is chosen anyway, for two reasons: it is the taxonomy's own principle (Modification is the dominant coding-agent action), and modification is the class a routing decision most needs to get right.
+
+**A gated hybrid was built and lost.** Precedence-above-a-minimum-share was measured at four thresholds and beat by pure precedence at every one:
+
+| min share | 0.15 | 0.25 | 0.35 | 0.50 |
+|---|---:|---:|---:|---:|
+| overall | 53.9% | 52.6% | 48.7% | 46.8% |
+
+It was removed rather than left as a knob someone could turn on. A configuration option that measured worse is a liability, not flexibility.
+
+## What this changes
+
+Turn classification keeps its strict threshold — the segment problem was never a reason to loosen it. Segment and session archetype use `RollUp(..., RollUpPrecedence)`, and carry **classified coverage as their confidence**, so an archetype resting on one classified turn in ten says so.
