@@ -185,11 +185,18 @@ type Message struct {
 }
 
 // ToolCall is a tool the model actually invoked (settled vantage only).
-// Failed records whether its result came back an error, which is the raw
-// material for the coding outcome adapters downstream.
 type ToolCall struct {
-	Name   string
-	Failed bool
+	Name string
+	// Failed records whether the result came back an error. Meaningful only
+	// when Resolved is true: a call with no result yet is not a call that
+	// succeeded, and conflating the two would score an interrupted session as
+	// a clean one.
+	Failed   bool
+	Resolved bool
+	// Target is what the call acted on — a file path, a command. Read to
+	// compute booleans and counts (did the next turn re-target the same file?)
+	// and NEVER retained: the outcome signals emit a digest, never this.
+	Target string
 }
 
 // Observation is the neutral input every caller can populate.
