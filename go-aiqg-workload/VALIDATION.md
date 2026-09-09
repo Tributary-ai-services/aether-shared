@@ -137,3 +137,44 @@ It was removed rather than left as a knob someone could turn on. A configuration
 ## What this changes
 
 Turn classification keeps its strict threshold — the segment problem was never a reason to loosen it. Segment and session archetype use `RollUp(..., RollUpPrecedence)`, and carry **classified coverage as their confidence**, so an archetype resting on one classified turn in ten says so.
+
+---
+
+# Rule learner — validated against SWE-chat, and it refuses
+
+**Date:** 2026-09-08 · **Corpus:** SWE-chat, 60,979 labelled segments · **Learner:** greedy conjunction, max 3 conditions, floors precision ≥ 0.8 / recall ≥ 0.5
+
+The learner turns a labelled *selection* into a *predicate*, because a set cannot classify tomorrow's requests. It was run against every SWE-chat intent with ≥400 segments, treating that intent's segments as the selection and everything else as negatives.
+
+| selection | n | precision | recall | F1 | usable | closest rule |
+|---|---:|---:|---:|---:|---|---|
+| `other` | 15,980 | 0.33 | 0.68 | 0.45 | **no** | readonly share ≤ 0 and share exec ≤ 0.84 |
+| `understand` | 11,618 | 0.27 | 0.61 | 0.38 | **no** | tool count ≤ 2 and depth ≥ 6 and share edit… |
+| `git` | 8,595 | 0.48 | 0.45 | 0.47 | **no** | share exec ≥ 0.66 and depth ≤ 49 |
+| `debug` | 8,097 | 0.22 | 0.47 | 0.30 | **no** | readonly share ≥ 0.12 and share other ≤ 0 |
+| `create new code` | 7,896 | 0.22 | 0.43 | 0.29 | **no** | tool count ≥ 3 and share exec ≤ 0.66 |
+| `refactor` | 5,724 | 0.20 | 0.26 | 0.22 | **no** | dominant family is edit |
+| `test` | 2,509 | 0.08 | 0.21 | 0.11 | **no** | tool count ≥ 9 and share edit ≤ 0.31 |
+| `connect` | 558 | 0.03 | 0.07 | 0.04 | **no** | share search ≥ 0.33 and share exec ≤ 0 |
+
+**Not one is learnable.** The best is `git` at F1 0.47, and it still fails both floors.
+
+## This is the learner working, not failing
+
+A learner that always returns something is worse than one that admits defeat, because the failure then surfaces months later as a class that never behaved as its name implied. Every row above returns the closest approximation *and* a sentence saying it is not good enough — which is the designed behaviour and the reason `Usable` exists as a separate field from the rule itself.
+
+It is also consistent with everything measured before it: 33.9% seed-classifier agreement on tool-bearing segments, and the present-vs-dominant split showing the expected family present in 62–93% of segments but dominant in far fewer. Three independent methods now agree that **structure alone does not reproduce semantic intent at segment granularity.**
+
+## What it does not show — and this matters for the product
+
+**SWE-chat is the hard case, not the representative one.** Its labels are *semantic*: what the user was asking for. Every segment is a coding session in the same harness, so the workloads differ by intent while looking structurally alike. That is close to the worst case for a structural learner.
+
+The customer case is different in kind. An operator naming *"our nightly contract-extraction job"* is selecting on `source_app`, a path, or a schedule — attributes that are **structurally distinct by construction**, because different applications genuinely send differently shaped traffic. SWE-chat cannot test that case at all: it has no source-app dimension.
+
+So this result is a **lower bound**. It says: a rule learned from tool structure alone will not reconstruct a semantic intent. It does not say the learner will fail on an operational segment, and it should not be quoted as if it did.
+
+## The design change it points to
+
+The feature vector deliberately excludes attribution — `source_app`, path, principal — because those are customer data that must never reach pooled Tier-C aggregates. That exclusion is right for the *shared* layer and **wrong for local rule learning**: within a tenant, those fields never leave, and they are exactly the discriminative features an operator's filter selects on.
+
+The follow-up is therefore a split the design does not currently make: **poolable features** (structural, shareable as centroids) versus **tenant-local features** (attribution, usable for learning, never shared). The learner should see both; Tier C should see only the first. Recorded here rather than built, because it should be designed against a real customer segment rather than guessed at.
