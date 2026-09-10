@@ -230,6 +230,45 @@ type Observation struct {
 
 	FinishReason string
 	Retried      bool
+
+	// Local carries tenant-local attribution — model, source app, agent, user.
+	// See localFeatureAllowlist for what survives and why the rest is dropped.
+	Local map[string]string
+}
+
+// localFeatureAllowlist is the attribution a tenant-local rule may learn from.
+//
+// # Why attribution at all
+//
+// The structural vector cannot reproduce a selection made on attribution:
+// validated against SWE-chat, a learner restricted to structure refused every
+// labelled intent (best F1 0.47). An operator naming "our nightly
+// contract-extraction job" selects on source_app or an agent, and those are
+// exactly the fields the structural vector deliberately excludes.
+//
+// # Why an allowlist, and why these
+//
+// Only fields that GENERALISE to tomorrow's traffic are admitted. A rule
+// learned on conversation_id or a response id would reproduce the operator's
+// selection perfectly and describe nothing about any future request — it
+// would overfit to the point of being the selection. client_ip is out because
+// it changes under DHCP and NAT and would silently stop matching.
+//
+// # Why these can never be pooled
+//
+// This is customer data. Features.Local carries `json:"-"`, so a Features
+// value marshalled into any cross-tenant payload loses it STRUCTURALLY rather
+// than by a convention someone must remember — see aether-shared#75.
+var localFeatureAllowlist = map[string]bool{
+	"model":          true,
+	"vendor":         true,
+	"workflow":       true,
+	"status":         true,
+	"source_app":     true,
+	"agent_id":       true,
+	"user_id":        true,
+	"capture_source": true,
+	"role":           true,
 }
 
 // Features is the vector. Every field is a count, a ratio, a bucket or a flag.
@@ -265,6 +304,11 @@ type Features struct {
 	Truncated    bool   `json:"truncated,omitempty"`
 	Retried      bool   `json:"retried,omitempty"`
 	ToolFailures int    `json:"tool_failures,omitempty"`
+
+	// Local is tenant-local attribution, allowlisted in Extract. `json:"-"` is
+	// the enforcement: it cannot serialize into anything pooled across tenants,
+	// whoever marshals this struct and for whatever reason.
+	Local map[string]string `json:"-"`
 }
 
 // Extract computes the vector. Pure: no I/O, no inference, no retained text.
@@ -318,6 +362,18 @@ func Extract(o Observation) Features {
 		f.RetrievalMarkers += len(retrievalMarker.FindAllStringIndex(m.Text, -1))
 	}
 	f.RetrievalMarkers += len(retrievalMarker.FindAllStringIndex(o.SystemPrompt, -1))
+
+	for k, v := range o.Local {
+		key := strings.ToLower(strings.TrimSpace(k))
+		val := strings.TrimSpace(v)
+		if val == "" || !localFeatureAllowlist[key] {
+			continue // absent and non-generalising attribution are both dropped
+		}
+		if f.Local == nil {
+			f.Local = map[string]string{}
+		}
+		f.Local[key] = val
+	}
 
 	return f
 }
