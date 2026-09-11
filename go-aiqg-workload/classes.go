@@ -146,6 +146,22 @@ type Rule struct {
 	Confidence float64 `json:"confidence"`
 	// Note is the sentence this rule means, for the operator-facing surface.
 	Note string `json:"note,omitempty"`
+	// TenantLocal marks a rule that depends on tenant attribution. Such a rule
+	// is valid for the tenant it was learned in and meaningless anywhere else,
+	// so it must never be proposed to another tenant through the global layer.
+	TenantLocal bool `json:"tenant_local,omitempty"`
+}
+
+// UsesTenantLocal reports whether any condition reads tenant attribution.
+// Computed from the conditions rather than trusted from the flag, so a rule
+// deserialised without the flag still cannot slip into the global layer.
+func (r Rule) UsesTenantLocal() bool {
+	for _, c := range r.AllOf {
+		if strings.HasPrefix(c.Feature, LocalPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Class is one workload class in the space.
@@ -311,7 +327,20 @@ func (c Cond) eval(f Features) (bool, error) {
 	}
 }
 
+// LocalPrefix addresses a tenant-local attribute from a rule, e.g.
+// "local:source_app". Prefixed rather than listed alongside the structural
+// features so a reader of a rule can see at a glance that it depends on
+// customer attribution and cannot transfer to another tenant.
+const LocalPrefix = "local:"
+
 func stringFeature(name string, f Features) (string, bool) {
+	if strings.HasPrefix(name, LocalPrefix) {
+		// An absent attribute resolves to "" rather than an error: a request
+		// with no source_app simply does not match source_app == X, and
+		// treating absence as an error would make Validate reject every local
+		// rule against its empty probe.
+		return f.Local[strings.TrimPrefix(name, LocalPrefix)], true
+	}
 	switch name {
 	case FDominantFamily:
 		fam, _ := f.DominantFamily()
@@ -418,6 +447,11 @@ func (s Space) Validate() []error {
 				if _, err := cond.eval(probe); err != nil {
 					errs = append(errs, fmt.Errorf("class %q rule %d: %w", c.ID, i, err))
 				}
+			}
+			if r.UsesTenantLocal() && (c.Origin == OriginGlobal || c.Origin == OriginSeed) {
+				errs = append(errs, fmt.Errorf(
+					"class %q rule %d depends on tenant attribution but the class is %s — a global class cannot rest on one tenant's source apps, agents or users",
+					c.ID, i, c.Origin))
 			}
 		}
 	}

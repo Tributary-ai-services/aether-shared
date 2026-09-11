@@ -87,6 +87,10 @@ type FitReport struct {
 	Reason string `json:"reason,omitempty"`
 	// Explanation renders the rule as a sentence.
 	Explanation string `json:"explanation,omitempty"`
+	// UsesTenantLocal is true when the rule depends on tenant attribution.
+	// Surfaced because it changes what the rule is: valid here, meaningless in
+	// any other tenant, and never a candidate for the global layer.
+	UsesTenantLocal bool `json:"uses_tenant_local"`
 }
 
 // LearnRule fits a conjunction that reproduces the selected examples.
@@ -159,9 +163,13 @@ func LearnRule(examples []Example, opts LearnOptions) (Rule, FitReport) {
 			rep.Recall*100, rep.Precision*100)
 	}
 
+	rule := Rule{AllOf: chosen, Confidence: clamp01(rep.Precision), Note: rep.Explanation}
+	rule.TenantLocal = rule.UsesTenantLocal()
+	rep.UsesTenantLocal = rule.TenantLocal
+
 	// Confidence mirrors precision: a rule right four times in five should not
 	// present as certain.
-	return Rule{AllOf: chosen, Confidence: clamp01(rep.Precision), Note: rep.Explanation}, rep
+	return rule, rep
 }
 
 type scored struct {
@@ -245,6 +253,11 @@ func candidateConds(examples []Example) []Cond {
 				add(Cond{Feature: f, Op: OpEq, Str: v})
 			}
 		}
+		// Tenant-local attribution. Already allowlisted by Extract, so every
+		// candidate here is one that generalises to tomorrow's traffic.
+		for k, v := range e.Features.Local {
+			add(Cond{Feature: LocalPrefix + k, Op: OpEq, Str: v})
+		}
 	}
 	for f, vs := range values {
 		for _, q := range quantiles(vs) {
@@ -311,7 +324,7 @@ func explain(conds []Cond) string {
 }
 
 func explainCond(c Cond) string {
-	name := strings.ReplaceAll(c.Feature, "_", " ")
+	name := strings.ReplaceAll(strings.TrimPrefix(c.Feature, LocalPrefix), "_", " ")
 	if c.Str != "" {
 		return fmt.Sprintf("%s is %s", name, c.Str)
 	}
