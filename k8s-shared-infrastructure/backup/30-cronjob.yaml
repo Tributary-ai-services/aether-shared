@@ -1,0 +1,179 @@
+---
+# Nightly backup of every stateful TAS data store (OPS-1).
+#
+# SHAPE: the three dump steps run as initContainers, which Kubernetes runs in
+# order and which abort the pod on first failure. That gives a consistent set
+# for free -- all four dumps come from roughly the same moment, and a partial
+# set can never be promoted. The final container seals, mirrors and ships it.
+#
+# Images are chosen to already be resident on this node: postgres:15-alpine and
+# neo4j:5.15-community are what the servers themselves run. rclone is pulled
+# from Docker Hub and pinned -- see OPS-14 on floating tags.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: tas-backup
+  namespace: tas-shared
+  labels:
+    project: tas
+    tier: shared-infrastructure
+    component: backup
+spec:
+  # 03:30 UTC daily. Deliberately clear of agent-builder-model-migration,
+  # which holds 04:00 Monday.
+  schedule: "30 3 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 14
+  # If the node is down at 03:30, run late rather than skip silently.
+  startingDeadlineSeconds: 7200
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # A run that hangs must not block tomorrow's (concurrencyPolicy: Forbid).
+      activeDeadlineSeconds: 5400
+      template:
+        metadata:
+          labels:
+            app: tas-backup
+            component: backup
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: false
+            fsGroup: 0
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: tas-backups
+            - name: scripts
+              configMap:
+                name: tas-backup-scripts
+                defaultMode: 0755
+            # Carries the run timestamp from the first container to the rest,
+            # so all four dumps land in one directory.
+            - name: run
+              emptyDir: {}
+
+          initContainers:
+            - name: dump-databases
+              image: postgres:15-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "/scripts/dump-databases.sh"]
+              env:
+                - name: BACKUP_ROOT
+                  value: /backup
+                - name: PGSHARED_USER
+                  valueFrom:
+                    secretKeyRef: { name: postgres-shared-secret, key: username }
+                - name: PGSHARED_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: postgres-shared-secret, key: password }
+                - name: KEYCLOAK_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: keycloak-db-shared-secret, key: password }
+                - name: TIMESCALE_USER
+                  valueFrom:
+                    secretKeyRef: { name: timescaledb-shared-secret, key: username }
+                - name: TIMESCALE_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: timescaledb-shared-secret, key: password }
+              volumeMounts:
+                - { name: backups, mountPath: /backup }
+                - { name: scripts, mountPath: /scripts }
+                - { name: run,     mountPath: /run/backup }
+
+            - name: dump-neo4j
+              image: neo4j:5.15-community
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "/scripts/dump-neo4j.sh"]
+              env:
+                - name: BACKUP_ROOT
+                  value: /backup
+                - name: NEO4J_HOST
+                  value: neo4j.aether-be.svc.cluster.local
+                - name: NEO4J_USER
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: neo4j-user }
+                - name: NEO4J_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: neo4j-password }
+              volumeMounts:
+                - { name: backups, mountPath: /backup }
+                - { name: scripts, mountPath: /scripts }
+                - { name: run,     mountPath: /run/backup }
+
+          containers:
+            - name: finalize
+              image: rclone/rclone:1.68
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "/scripts/finalize.sh"]
+              env:
+                - name: BACKUP_ROOT
+                  value: /backup
+                - name: CLUSTER_NAME
+                  value: um773dev (k3s, single node)
+                - name: NEO4J_HOST
+                  value: neo4j.aether-be.svc.cluster.local
+
+                # --- retention -------------------------------------------
+                - { name: KEEP_LOCAL_DB,          value: "14" }
+                - { name: KEEP_LOCAL_SUPERSEDED,  value: "30" }
+                - { name: KEEP_R2_DB,             value: "30" }
+                - { name: KEEP_B2_DB,             value: "90" }
+
+                # Flip to "true" once both offsite targets are configured, so
+                # that losing them becomes a red job instead of a quiet warning.
+                - { name: OFFSITE_REQUIRED,       value: "false" }
+
+                # --- source: MinIO ---------------------------------------
+                - { name: RCLONE_CONFIG_MINIOSRC_TYPE,     value: s3 }
+                - { name: RCLONE_CONFIG_MINIOSRC_PROVIDER, value: Minio }
+                - { name: RCLONE_CONFIG_MINIOSRC_ENDPOINT, value: "http://minio-shared:9000" }
+                - { name: RCLONE_CONFIG_MINIOSRC_REGION,   value: us-east-1 }
+                - name: RCLONE_CONFIG_MINIOSRC_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: minio-shared-secret, key: root-user }
+                - name: RCLONE_CONFIG_MINIOSRC_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: { name: minio-shared-secret, key: root-password }
+
+                # --- offsite: Cloudflare R2 ------------------------------
+                - { name: RCLONE_CONFIG_R2_TYPE,     value: s3 }
+                - { name: RCLONE_CONFIG_R2_PROVIDER, value: Cloudflare }
+                - { name: RCLONE_CONFIG_R2_REGION,   value: auto }
+                - name: RCLONE_CONFIG_R2_ENDPOINT
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: r2-endpoint }
+                - name: RCLONE_CONFIG_R2_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: r2-access-key-id }
+                - name: RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: r2-secret-access-key }
+                - name: R2_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: r2-access-key-id }
+                - name: R2_BUCKET
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: r2-bucket }
+
+                # --- offsite: Backblaze B2 -------------------------------
+                - { name: RCLONE_CONFIG_B2_TYPE, value: b2 }
+                - name: RCLONE_CONFIG_B2_ACCOUNT
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: b2-account-id }
+                - name: RCLONE_CONFIG_B2_KEY
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: b2-application-key }
+                - name: B2_ACCOUNT_ID
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: b2-account-id }
+                - name: B2_BUCKET
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: b2-bucket }
+              volumeMounts:
+                - { name: backups, mountPath: /backup }
+                - { name: scripts, mountPath: /scripts }
+                - { name: run,     mountPath: /run/backup }
