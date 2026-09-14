@@ -1,0 +1,28 @@
+---
+# Staging + retention volume for TAS backups (OPS-1).
+#
+# NOTE ON WHAT THIS DOES AND DOES NOT PROTECT
+# Every PVC in this cluster is provisioned by local-path onto /dev/sda1, and so
+# is this one. A backup here survives an accidental DROP, a bad migration or an
+# application bug -- it does NOT survive loss of that disk. Disk-loss protection
+# comes from the offsite sync in 30-cronjob.yaml (Cloudflare R2 + Backblaze B2).
+# Do not treat this volume as the backup of record.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tas-backups
+  namespace: tas-shared
+  labels:
+    project: tas
+    tier: shared-infrastructure
+    component: backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      # Measured 2026-09-14: database dumps are ~8 MB compressed per run and
+      # the curated MinIO mirror is ~291 MB. 20Gi leaves room for the
+      # superseded-object history to grow for years.
+      storage: 20Gi

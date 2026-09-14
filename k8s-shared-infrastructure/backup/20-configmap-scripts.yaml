@@ -1,0 +1,289 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tas-backup-scripts
+  namespace: tas-shared
+  labels:
+    project: tas
+    tier: shared-infrastructure
+    component: backup
+data:
+  dump-databases.sh: |
+    #!/bin/sh
+    # Dumps the three PostgreSQL-family databases into the staging directory.
+    #
+    # Runs in postgres:15-alpine because all three servers are PostgreSQL 15 and
+    # pg_dump refuses to dump from a server newer than the client.
+    set -eu
+
+    # This is the first container in the pod, so it mints the timestamp that
+    # every later step reuses -- that is what makes the four dumps one set
+    # rather than four unrelated files.
+    mkdir -p /run/backup
+    date -u +%Y%m%dT%H%M%SZ > /run/backup/TS
+    BACKUP_TS="$(cat /run/backup/TS)"
+    echo "==> backup timestamp ${BACKUP_TS}"
+
+    DEST="${BACKUP_ROOT}/db/.in-progress/${BACKUP_TS}"
+    mkdir -p "$DEST"
+
+    # A truncated or empty dump has to fail the run HERE. TAS has already
+    # shipped a 0-byte "backup" once -- aether-be/backups/neo4j_backup_20250810
+    # is zero bytes -- and the reason OPS-1 stayed open is that nobody noticed.
+    # Every dump is checked for the marker its tool writes on clean completion.
+    verify() {
+      file="$1"
+      marker="$2"
+      if [ ! -s "$file" ]; then
+        echo "FATAL: $file is empty" >&2
+        exit 1
+      fi
+      if ! tail -5 "$file" | grep -qF "$marker"; then
+        echo "FATAL: $file has no completion marker ('$marker') -- dump truncated" >&2
+        exit 1
+      fi
+      echo "  ok $(basename "$file") -- $(wc -c < "$file") bytes"
+    }
+
+    echo "==> postgres-shared (pg_dumpall: every database plus roles)"
+    PGPASSWORD="$PGSHARED_PASSWORD" pg_dumpall \
+      --host=postgres-shared --username="$PGSHARED_USER" \
+      > "$DEST/postgres-shared.sql"
+    verify "$DEST/postgres-shared.sql" "PostgreSQL database cluster dump complete"
+
+    echo "==> keycloak-db-shared (pg_dumpall: the aether realm lives in here)"
+    PGPASSWORD="$KEYCLOAK_PASSWORD" pg_dumpall \
+      --host=keycloak-db-shared --username=keycloak \
+      > "$DEST/keycloak-db.sql"
+    verify "$DEST/keycloak-db.sql" "PostgreSQL database cluster dump complete"
+
+    echo "==> timescaledb-shared (pg_dump: tas_events)"
+    # pg_dump emits circular-foreign-key warnings for the TimescaleDB catalog
+    # tables (hypertable, chunk, continuous_agg). They are expected and are
+    # exactly why RESTORE.md insists on timescaledb_pre_restore(). Leave them
+    # on stderr where an operator reading the job log will see them.
+    PGPASSWORD="$TIMESCALE_PASSWORD" pg_dump \
+      --host=timescaledb-shared --username="$TIMESCALE_USER" \
+      --dbname=tas_events --format=plain \
+      > "$DEST/timescaledb-tas_events.sql"
+    verify "$DEST/timescaledb-tas_events.sql" "PostgreSQL database dump complete"
+
+    gzip -9 "$DEST"/*.sql
+    echo "==> databases complete"
+
+  dump-neo4j.sh: |
+    #!/bin/sh
+    # Logical export of the Neo4j graph into the staging directory.
+    set -eu
+
+    BACKUP_TS="$(cat /run/backup/TS)"
+
+    DEST="${BACKUP_ROOT}/db/.in-progress/${BACKUP_TS}"
+    mkdir -p "$DEST"
+    RAW="$DEST/.neo4j.b64"
+
+    # Neo4j 5.15 COMMUNITY has no online backup: `neo4j-admin database dump`
+    # requires the database to be stopped, and `neo4j-admin database backup` is
+    # Enterprise-only. So this is a logical APOC export, which does also carry
+    # indexes and constraints (verified 2026-09-14 -- the output opens with the
+    # CREATE RANGE INDEX statements).
+    #
+    # The payload is base64-encoded server-side on purpose. cypher-shell's
+    # --format plain escapes embedded quotes as \" while leaving backslashes
+    # untouched, which is ambiguous to invert on values that themselves contain
+    # escaped JSON -- and several Workflow.output properties in this graph do.
+    # Base64 contains no character that plain format will rewrite, so the only
+    # unwrapping needed is stripping the two surrounding quotes.
+    echo "==> neo4j (APOC cypher export, base64-framed)"
+    cypher-shell \
+      --address "bolt://${NEO4J_HOST}:7687" \
+      --username "$NEO4J_USER" \
+      --password "$NEO4J_PASSWORD" \
+      --format plain \
+      'CALL apoc.export.cypher.all(null,{stream:true,format:"cypher-shell"}) YIELD cypherStatements RETURN apoc.text.base64Encode(cypherStatements) AS b64;' \
+      > "$RAW"
+
+    # Line 1 is the "b64" column header; line 2 is the single quoted value.
+    tail -n +2 "$RAW" | sed 's/^"//; s/"$//' | tr -d '\n' | base64 -d > "$DEST/neo4j.cypher"
+    rm -f "$RAW"
+
+    if [ ! -s "$DEST/neo4j.cypher" ]; then
+      echo "FATAL: neo4j export is empty" >&2
+      exit 1
+    fi
+    if ! head -1 "$DEST/neo4j.cypher" | grep -qx ':begin'; then
+      echo "FATAL: neo4j export does not start with ':begin' -- not a cypher-shell script" >&2
+      exit 1
+    fi
+    if ! tail -1 "$DEST/neo4j.cypher" | grep -qx ':commit'; then
+      echo "FATAL: neo4j export does not end with ':commit' -- truncated" >&2
+      exit 1
+    fi
+
+    echo "  ok neo4j.cypher -- $(wc -c < "$DEST/neo4j.cypher") bytes"
+    gzip -9 "$DEST/neo4j.cypher"
+    echo "==> neo4j complete"
+
+  finalize.sh: |
+    #!/bin/sh
+    # Seals the staged database dumps, mirrors MinIO, pushes both offsite, and
+    # applies retention. Runs last; the two dump scripts run as initContainers
+    # before it, so reaching this script at all means every dump succeeded.
+    set -eu
+
+    BACKUP_TS="$(cat /run/backup/TS)"
+
+    STAGE="${BACKUP_ROOT}/db/.in-progress/${BACKUP_TS}"
+    FINAL="${BACKUP_ROOT}/db/${BACKUP_TS}"
+
+    if [ ! -d "$STAGE" ]; then
+      echo "FATAL: staging directory $STAGE does not exist" >&2
+      exit 1
+    fi
+
+    # ---------------------------------------------------------------- manifest
+    echo "==> writing MANIFEST"
+    {
+      echo "backup_timestamp: ${BACKUP_TS}"
+      echo "produced_by:      tas-backup CronJob (OPS-1)"
+      echo "cluster:          ${CLUSTER_NAME}"
+      echo ""
+      echo "contents:"
+      echo "  postgres-shared.sql.gz         pg_dumpall  <- postgres-shared      (aiqg, audimodal, tas_shared + roles)"
+      echo "  keycloak-db.sql.gz             pg_dumpall  <- keycloak-db-shared   (the aether realm)"
+      echo "  timescaledb-tas_events.sql.gz  pg_dump     <- timescaledb-shared   (hypertables: events, aiqg.event_metrics)"
+      echo "  neo4j.cypher.gz                APOC export <- ${NEO4J_HOST}"
+      echo ""
+      echo "sha256:"
+      ( cd "$STAGE" && sha256sum ./*.gz | sed 's/^/  /' )
+    } > "$STAGE/MANIFEST"
+    cat "$STAGE/MANIFEST"
+
+    # ----------------------------------------------------------------- promote
+    # Only a complete set gets a visible name. Everything under .in-progress/ is
+    # by definition untrustworthy: it is never synced offsite and RESTORE.md
+    # never restores from it. This is what makes "is this restore point good?"
+    # an answerable question rather than a hopeful one.
+    mv "$STAGE" "$FINAL"
+    echo "${BACKUP_TS}" > "${BACKUP_ROOT}/db/LATEST"
+    echo "==> promoted ${BACKUP_TS}"
+
+    # ------------------------------------------------------------ minio mirror
+    # Object storage is mirrored rather than snapshotted: a per-run copy of
+    # every bucket would multiply ~291 MB by the retention count for no real
+    # gain. --backup-dir keeps the safety property that matters -- an object
+    # that is overwritten or deleted upstream is moved into superseded/<ts>/
+    # rather than being lost from the backup on the next run.
+    echo "==> mirroring MinIO"
+    if ! rclone lsd MINIOSRC: --retries 3 > /tmp/buckets.txt; then
+      echo "FATAL: cannot list MinIO buckets -- refusing to sync (would look like mass deletion)" >&2
+      exit 1
+    fi
+    if [ ! -s /tmp/buckets.txt ]; then
+      echo "FATAL: MinIO reported zero buckets -- refusing to sync over a good mirror" >&2
+      exit 1
+    fi
+    echo "  buckets visible upstream:"
+    sed 's/^/    /' /tmp/buckets.txt
+
+    # loki-data and spark-checkpoints are deliberately excluded: Loki chunks are
+    # observability data with their own 30-day retention and Spark checkpoints
+    # regenerate. Between them they are 569 MB of the 860 MB total. Excluding by
+    # name (rather than listing what to include) means a NEW bucket is backed up
+    # by default -- the safe direction for a backup to fail in. See OPS-20.
+    rclone sync MINIOSRC: "${BACKUP_ROOT}/minio/current" \
+      --exclude "/loki-data/**" \
+      --exclude "/spark-checkpoints/**" \
+      --backup-dir "${BACKUP_ROOT}/minio/superseded/${BACKUP_TS}" \
+      --stats-one-line --stats 30s --retries 3
+    echo "==> MinIO mirror complete"
+
+    # ------------------------------------------------------------------ offsite
+    OFFSITE_SKIPPED=""
+
+    push_offsite() {
+      remote="$1"
+      bucket="$2"
+      label="$3"
+      scope="$4"
+
+      echo "==> offsite: ${label} (${scope})"
+      # Versioned database dumps -- ~8 MB per run, so hundreds of restore
+      # points fit inside a 10 GB free tier.
+      rclone copy "${BACKUP_ROOT}/db/${BACKUP_TS}" "${remote}:${bucket}/db/${BACKUP_TS}" \
+        --stats-one-line --stats 30s --retries 3
+
+      if [ "$scope" = "full" ]; then
+        rclone sync "${BACKUP_ROOT}/minio/current" "${remote}:${bucket}/minio/current" \
+          --backup-dir "${remote}:${bucket}/minio/superseded/${BACKUP_TS}" \
+          --stats-one-line --stats 30s --retries 3
+      fi
+      echo "  ${label} ok"
+    }
+
+    if [ -n "${R2_ACCESS_KEY_ID:-}" ]; then
+      push_offsite R2 "$R2_BUCKET" "Cloudflare R2" full
+    else
+      echo "!! Cloudflare R2 not configured -- no offsite copy written"
+      OFFSITE_SKIPPED="${OFFSITE_SKIPPED} r2"
+    fi
+
+    if [ -n "${B2_ACCOUNT_ID:-}" ]; then
+      push_offsite B2 "$B2_BUCKET" "Backblaze B2" db-only
+    else
+      echo "!! Backblaze B2 not configured -- no break-glass copy written"
+      OFFSITE_SKIPPED="${OFFSITE_SKIPPED} b2"
+    fi
+
+    # ---------------------------------------------------------------- retention
+    echo "==> retention"
+    prune_local() {
+      dir="$1"; keep="$2"; what="$3"
+      [ -d "$dir" ] || return 0
+      # Timestamps sort lexically because they are YYYYmmddTHHMMSSZ.
+      ( cd "$dir" && ls -1d 2*/ 2>/dev/null | sed 's#/$##' | sort -r | tail -n +$((keep + 1)) ) \
+        | while read -r old; do
+            [ -n "$old" ] || continue
+            echo "  pruning ${what}/${old}"
+            rm -rf "${dir:?}/${old:?}"
+          done
+    }
+    prune_local "${BACKUP_ROOT}/db" "$KEEP_LOCAL_DB" "db"
+    prune_local "${BACKUP_ROOT}/minio/superseded" "$KEEP_LOCAL_SUPERSEDED" "minio/superseded"
+
+    prune_remote() {
+      remote="$1"; bucket="$2"; keep="$3"; label="$4"
+      rclone lsf "${remote}:${bucket}/db/" --dirs-only 2>/dev/null \
+        | sed 's#/$##' | sort -r | tail -n +$((keep + 1)) \
+        | while read -r old; do
+            [ -n "$old" ] || continue
+            echo "  pruning ${label} db/${old}"
+            rclone purge "${remote}:${bucket}/db/${old}" || true
+          done
+    }
+    if [ -n "${R2_ACCESS_KEY_ID:-}" ]; then
+      prune_remote R2 "$R2_BUCKET" "$KEEP_R2_DB" "R2"
+    fi
+    if [ -n "${B2_ACCOUNT_ID:-}" ]; then
+      prune_remote B2 "$B2_BUCKET" "$KEEP_B2_DB" "B2"
+    fi
+
+    # ------------------------------------------------------------------ verdict
+    echo ""
+    echo "================================================================"
+    echo " backup ${BACKUP_TS} complete"
+    ( cd "${BACKUP_ROOT}/db" && echo " local restore points: $(ls -1d 2*/ 2>/dev/null | wc -l)" )
+    echo " local disk:          $(df -h "${BACKUP_ROOT}" | awk 'NR==2 {print $4" free of "$2}')"
+    if [ -n "$OFFSITE_SKIPPED" ]; then
+      echo ""
+      echo " WARNING: no offsite copy for:${OFFSITE_SKIPPED}"
+      echo " This backup exists only on /dev/sda1, the same disk as the data it"
+      echo " protects. It survives a bad migration; it does not survive the disk."
+      echo " Fix: fill in tas-backup-credentials (see 10-secret.example.yaml)."
+      if [ "${OFFSITE_REQUIRED}" = "true" ]; then
+        echo " OFFSITE_REQUIRED=true -- failing the job."
+        exit 1
+      fi
+    fi
+    echo "================================================================"
