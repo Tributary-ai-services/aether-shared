@@ -272,6 +272,25 @@ data:
           target_label: namespace
         metrics_path: '/metrics/prometheus'
 
+      # aiqg-dashboard-be — both deployments. Scraped for the digest-delivery
+      # metrics (OPS-24): the daily admin digest silently stopped for ~20 days
+      # and nothing noticed, because this service was not scraped at all.
+      - job_name: 'aiqg-dashboard-be'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - aiqg
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: aiqg-dashboard-be|aiqg-dashboard-be-public
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: service
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        metrics_path: '/metrics'
+
       - job_name: 'llm-router'
         # Target the tas-llm-router namespace where the Deployment
         # actually lives. The prior `llm-router` namespace doesn't
@@ -339,6 +358,75 @@ metadata:
 data:
   # Alerting rules loaded via prometheus.yml rule_files (/etc/prometheus/rules/*.yml).
   # Alertmanager (alertmanager-shared:9093) routes what fires.
+  # OPS-24. The admin activity digest is claimed through one shared row, so any
+  # replica may be the sender: alert on the max across instances, never per pod.
+  aiqg-digest-alerts.yml: |
+    groups:
+      - name: aiqg_activity_digest
+        interval: 60s
+        rules:
+          # The failure that actually happened: delivery simply stopped —
+          # 2026-08-28 to 2026-09-17, no error anyone saw, because every pod was
+          # degraded and no digest worker ran. Silence is the signal, so this
+          # alerts on staleness rather than on errors. The digest is sent once a
+          # day at 13:00 UTC; 26h allows a late send plus a missed tick without
+          # firing, and catches a genuine miss the following day.
+          - alert: AIQGActivityDigestStalled
+            expr: time() - max(aiqg_activity_digest_last_success_timestamp_seconds) > 26 * 3600
+            for: 30m
+            labels:
+              severity: warning
+              service: aiqg-dashboard-be
+              component: activity-digest
+            annotations:
+              summary: "AIQG admin activity digest has not been sent for over 26h"
+              description: >
+                No replica has recorded a successful admin digest send in
+                {{ $value | humanizeDuration }}. The gauge is seeded at boot from
+                aiqg.notification_log, so this is a real miss, not a restart.
+                Usual causes: the mail workers are gated off because this
+                deployment has no SMTP password (look for "SMTP username set
+                without a password" at boot), PostgreSQL was unavailable at boot
+                so the workers never started (OPS-19), or the Brevo relay is
+                rejecting the credential (535).
+
+          # The metric vanishing is the same outage wearing a different hat: a
+          # pod that cannot reach PostgreSQL at boot never starts the worker, and
+          # a stale image does not export the gauge at all. Without this, "no
+          # data" would read as "nothing wrong".
+          - alert: AIQGActivityDigestMetricMissing
+            expr: absent(aiqg_activity_digest_last_success_timestamp_seconds)
+            for: 30m
+            labels:
+              severity: warning
+              service: aiqg-dashboard-be
+              component: activity-digest
+            annotations:
+              summary: "AIQG digest health metric is not being reported"
+              description: >
+                No aiqg-dashboard-be replica has exported
+                aiqg_activity_digest_last_success_timestamp_seconds for 30m.
+                Either the scrape target is down, or every replica has the digest
+                worker disabled. Check "up{job='aiqg-dashboard-be'}" first.
+
+          # Credentials or relay wrong: sends are being attempted and refused.
+          # Distinct from staleness — this fires within the hour, before the
+          # 26h threshold, when the relay starts rejecting us.
+          - alert: AIQGActivityDigestSendFailing
+            expr: increase(aiqg_activity_digest_send_failures_total[1h]) > 3
+            for: 0m
+            labels:
+              severity: warning
+              service: aiqg-dashboard-be
+              component: activity-digest
+            annotations:
+              summary: "AIQG admin activity digest sends are failing"
+              description: >
+                {{ $value | printf "%.0f" }} failed digest send attempts in the
+                last hour on {{ $labels.instance }}. A 535 means the SMTP
+                credential is wrong or missing; the send is retried every 15
+                minutes, and the claim is released each time.
+
   semcache-judge-alerts.yml: |
     groups:
       - name: aiqg_semcache_judge
