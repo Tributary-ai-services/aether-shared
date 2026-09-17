@@ -201,36 +201,74 @@ data:
 
     # ------------------------------------------------------------------ offsite
     OFFSITE_SKIPPED=""
+    OFFSITE_ANY=""
+    if [ -n "${R2_ACCESS_KEY_ID:-}" ] || [ -n "${B2_ACCOUNT_ID:-}" ]; then
+      OFFSITE_ANY=1
+    fi
+
+    # Offsite copies are ALWAYS client-side encrypted with rclone crypt, so R2
+    # and B2 only ever hold ciphertext with encrypted file and directory names.
+    # The dumps contain Keycloak password hashes and client secrets and every
+    # tenant's AIQG data; provider-side encryption at rest would leave the
+    # provider holding the key. There is deliberately no plaintext fallback: if
+    # credentials exist but the passphrase does not, the run fails rather than
+    # uploading in the clear.
+    if [ -n "$OFFSITE_ANY" ]; then
+      if [ -z "${CRYPT_PASSWORD:-}" ] || [ -z "${CRYPT_SALT:-}" ]; then
+        echo "FATAL: offsite credentials are set but crypt-password/crypt-salt are not." >&2
+        echo "       Refusing to upload unencrypted backups. See 10-secret.example.yaml." >&2
+        exit 1
+      fi
+      CRYPT_OBSCURED_PW="$(rclone obscure "$CRYPT_PASSWORD")"
+      CRYPT_OBSCURED_SALT="$(rclone obscure "$CRYPT_SALT")"
+    fi
+
+    # One passphrase for both targets, so a single secret restores either.
+    wrap_crypt() {
+      name="$1"; base="$2"
+      export "RCLONE_CONFIG_${name}_TYPE=crypt"
+      export "RCLONE_CONFIG_${name}_REMOTE=${base}"
+      export "RCLONE_CONFIG_${name}_PASSWORD=${CRYPT_OBSCURED_PW}"
+      export "RCLONE_CONFIG_${name}_PASSWORD2=${CRYPT_OBSCURED_SALT}"
+    }
 
     push_offsite() {
-      remote="$1"
-      bucket="$2"
-      label="$3"
-      scope="$4"
+      remote="$1"   # a crypt remote -- never the raw bucket
+      label="$2"
+      scope="$3"
 
-      echo "==> offsite: ${label} (${scope})"
+      echo "==> offsite: ${label} (${scope}, encrypted)"
       # Versioned database dumps -- ~8 MB per run, so hundreds of restore
       # points fit inside a 10 GB free tier.
-      rclone copy "${BACKUP_ROOT}/db/${BACKUP_TS}" "${remote}:${bucket}/db/${BACKUP_TS}" \
+      rclone copy "${BACKUP_ROOT}/db/${BACKUP_TS}" "${remote}:db/${BACKUP_TS}" \
         --stats-one-line --stats 30s --retries 3
 
+      # Prove the upload is readable, not just present: cryptcheck re-encrypts
+      # each local file with the nonce stored remotely and compares hashes, so
+      # a wrong passphrase or a corrupted object fails the run tonight rather
+      # than during a restore.
+      rclone cryptcheck "${BACKUP_ROOT}/db/${BACKUP_TS}" "${remote}:db/${BACKUP_TS}" --one-way
+      echo "  ${label} db set verified by cryptcheck"
+
       if [ "$scope" = "full" ]; then
-        rclone sync "${BACKUP_ROOT}/minio/current" "${remote}:${bucket}/minio/current" \
-          --backup-dir "${remote}:${bucket}/minio/superseded/${BACKUP_TS}" \
+        rclone sync "${BACKUP_ROOT}/minio/current" "${remote}:minio/current" \
+          --backup-dir "${remote}:minio/superseded/${BACKUP_TS}" \
           --stats-one-line --stats 30s --retries 3
       fi
       echo "  ${label} ok"
     }
 
     if [ -n "${R2_ACCESS_KEY_ID:-}" ]; then
-      push_offsite R2 "$R2_BUCKET" "Cloudflare R2" full
+      wrap_crypt R2C "R2:${R2_BUCKET}"
+      push_offsite R2C "Cloudflare R2" full
     else
       echo "!! Cloudflare R2 not configured -- no offsite copy written"
       OFFSITE_SKIPPED="${OFFSITE_SKIPPED} r2"
     fi
 
     if [ -n "${B2_ACCOUNT_ID:-}" ]; then
-      push_offsite B2 "$B2_BUCKET" "Backblaze B2" db-only
+      wrap_crypt B2C "B2:${B2_BUCKET}"
+      push_offsite B2C "Backblaze B2" db-only
     else
       echo "!! Backblaze B2 not configured -- no break-glass copy written"
       OFFSITE_SKIPPED="${OFFSITE_SKIPPED} b2"
@@ -253,20 +291,23 @@ data:
     prune_local "${BACKUP_ROOT}/minio/superseded" "$KEEP_LOCAL_SUPERSEDED" "minio/superseded"
 
     prune_remote() {
-      remote="$1"; bucket="$2"; keep="$3"; label="$4"
-      rclone lsf "${remote}:${bucket}/db/" --dirs-only 2>/dev/null \
-        | sed 's#/$##' | sort -r | tail -n +$((keep + 1)) \
+      remote="$1"; keep="$2"; label="$3"
+      # Listed THROUGH the crypt remote, so directory names come back decrypted
+      # and still sort by timestamp. Listing the raw bucket would return
+      # ciphertext names in random order and prune the wrong sets.
+      rclone lsf "${remote}:db/" --dirs-only 2>/dev/null \
+        | sed 's#/$##' | grep -E '^[0-9]{8}T[0-9]{6}Z$' | sort -r | tail -n +$((keep + 1)) \
         | while read -r old; do
             [ -n "$old" ] || continue
             echo "  pruning ${label} db/${old}"
-            rclone purge "${remote}:${bucket}/db/${old}" || true
+            rclone purge "${remote}:db/${old}" || true
           done
     }
     if [ -n "${R2_ACCESS_KEY_ID:-}" ]; then
-      prune_remote R2 "$R2_BUCKET" "$KEEP_R2_DB" "R2"
+      prune_remote R2C "$KEEP_R2_DB" "R2"
     fi
     if [ -n "${B2_ACCOUNT_ID:-}" ]; then
-      prune_remote B2 "$B2_BUCKET" "$KEEP_B2_DB" "B2"
+      prune_remote B2C "$KEEP_B2_DB" "B2"
     fi
 
     # ------------------------------------------------------------------ verdict
@@ -278,8 +319,13 @@ data:
     if [ -n "$OFFSITE_SKIPPED" ]; then
       echo ""
       echo " WARNING: no offsite copy for:${OFFSITE_SKIPPED}"
-      echo " This backup exists only on /dev/sda1, the same disk as the data it"
-      echo " protects. It survives a bad migration; it does not survive the disk."
+      if [ -z "$OFFSITE_ANY" ]; then
+        echo " This backup exists only on /dev/sda1, the same disk as the data it"
+        echo " protects. It survives a bad migration; it does not survive the disk."
+      else
+        echo " Other offsite copies were written and verified, so this is a loss of"
+        echo " redundancy, not of disk-loss protection."
+      fi
       echo " Fix: fill in tas-backup-credentials (see 10-secret.example.yaml)."
       if [ "${OFFSITE_REQUIRED}" = "true" ]; then
         echo " OFFSITE_REQUIRED=true -- failing the job."

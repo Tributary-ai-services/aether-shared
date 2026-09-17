@@ -40,13 +40,23 @@ are not backed up here either — they belong to `aether-secrets`.
 | Copy | Location | Holds | Keeps |
 |---|---|---|---|
 | Local | PVC `tas-backups` | everything | 14 sets |
-| Cloudflare R2 | `db/` + `minio/` | everything | 30 sets |
-| Backblaze B2 | `db/` only | databases | 90 sets |
+| Cloudflare R2 | `tas-backups`, encrypted | everything | 30 sets |
+| Backblaze B2 | *(not yet configured)*, encrypted | databases | 90 sets |
 
 **The local copy is on `/dev/sda1` — the same physical disk as every PVC it
 protects.** It covers a bad migration, a bad deploy or an accidental `DROP`. It
 does not cover losing that disk. Disk-loss protection is the offsite copy, which
 is why the job prints a loud warning while offsite is unconfigured.
+
+**Offsite copies are always encrypted client-side** with rclone `crypt`. File
+contents and names are ciphertext before they leave the cluster, and
+`finalize.sh` refuses to upload at all if credentials are present but the
+passphrase is not. Every upload is checked the same night with
+`rclone cryptcheck`, so a wrong passphrase or a corrupt object fails the run
+instead of turning up later during a restore. **The passphrase is the single
+point of failure for offsite recovery.** It lives in the cluster, in
+`aether-secrets/Backup-Crypt-Passphrase`, and should also be in a password
+manager.
 
 R2 and B2 are two vendors on purpose. Cloudflare already fronts production
 through the `airops-edge` tunnel; if that account were ever lost, a
@@ -73,10 +83,17 @@ and shred the copy. It needs:
 - **Neo4j** — `aether-be`'s StatefulSet carries `NEO4J_AUTH` as a literal env
   value rather than a Secret, so the password has to be repeated here. That is
   tracked separately as **SEC-19**.
-- **Cloudflare R2** — dashboard → R2 → Manage API tokens → Create token, scoped
-  *Object Read & Write* and restricted to the backup bucket. Endpoint is
-  `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`.
-- **Backblaze B2** — Application Keys, scoped to the backup bucket.
+- **Cloudflare R2** — R2 → Overview → *Account Details* → **Manage** API Tokens →
+  Create Account API token, *Object Read & Write*, restricted to `tas-backups`,
+  TTL forever. Endpoint is `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`. A
+  bucket-scoped token cannot call `CreateBucket`, which is why the CronJob sets
+  `RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true`.
+- **Backblaze B2** — Application Keys, scoped to the backup bucket; the keyID
+  goes in `b2-account-id`. Set the bucket's lifecycle to **keep only the last
+  version**, otherwise retention deletes just hide old sets and they keep
+  counting toward the free tier.
+- **Crypt passphrase** — `crypt-password` and `crypt-salt`, two long random
+  strings. Keep a copy outside the cluster.
 
 Once both are configured, set `OFFSITE_REQUIRED=true` in `30-cronjob.yaml` so
 that losing an offsite target becomes a failed job rather than a warning

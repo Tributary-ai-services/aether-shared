@@ -143,6 +143,11 @@ spec:
                 - { name: RCLONE_CONFIG_R2_TYPE,     value: s3 }
                 - { name: RCLONE_CONFIG_R2_PROVIDER, value: Cloudflare }
                 - { name: RCLONE_CONFIG_R2_REGION,   value: auto }
+                # The R2 token is scoped to one bucket, so it may not call
+                # CreateBucket -- which rclone attempts before its first upload
+                # unless told the bucket exists. Verified 2026-09-17: 403
+                # AccessDenied on CreateBucket without this, clean write with it.
+                - { name: RCLONE_CONFIG_R2_NO_CHECK_BUCKET, value: "true" }
                 - name: RCLONE_CONFIG_R2_ENDPOINT
                   valueFrom:
                     secretKeyRef: { name: tas-backup-credentials, key: r2-endpoint }
@@ -161,6 +166,11 @@ spec:
 
                 # --- offsite: Backblaze B2 -------------------------------
                 - { name: RCLONE_CONFIG_B2_TYPE, value: b2 }
+                # B2 keeps every file version forever by default, so an ordinary
+                # delete only HIDES the old set -- it keeps counting toward the
+                # 10 GB free tier and retention silently stops working. Pair
+                # this with a "keep only the last version" lifecycle rule.
+                - { name: RCLONE_CONFIG_B2_HARD_DELETE, value: "true" }
                 - name: RCLONE_CONFIG_B2_ACCOUNT
                   valueFrom:
                     secretKeyRef: { name: tas-backup-credentials, key: b2-account-id }
@@ -173,6 +183,17 @@ spec:
                 - name: B2_BUCKET
                   valueFrom:
                     secretKeyRef: { name: tas-backup-credentials, key: b2-bucket }
+
+                # --- client-side encryption for everything offsite ---------
+                # finalize.sh refuses to upload if offsite credentials exist but
+                # these do not. optional: true so a cluster with no offsite at
+                # all still starts the pod.
+                - name: CRYPT_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: crypt-password, optional: true }
+                - name: CRYPT_SALT
+                  valueFrom:
+                    secretKeyRef: { name: tas-backup-credentials, key: crypt-salt, optional: true }
               volumeMounts:
                 - { name: backups, mountPath: /backup }
                 - { name: scripts, mountPath: /scripts }

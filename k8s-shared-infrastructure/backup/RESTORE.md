@@ -73,11 +73,53 @@ restoring something corrupt.
 
 ### Pulling a set from offsite
 
+**Everything offsite is encrypted** with rclone `crypt`. Object names in the
+buckets are ciphertext, so browsing R2 or B2 in their consoles shows nothing
+recognisable, and none of it is readable without the passphrase. Do not delete
+"unrecognised" objects from those buckets; they are the backups.
+
+You need three things, and in a real disaster the cluster may be gone, so keep
+all three outside it:
+
+| What | Where it lives |
+|---|---|
+| Passphrase (`crypt-password`, `crypt-salt`) | `aether-secrets/Backup-Crypt-Passphrase` **and a password manager**; in-cluster copy in `tas-shared/tas-backup-credentials` |
+| R2 token | `aether-secrets/R2-Backup-Token`. The S3 Access Key ID is the token's **id**, and the Secret Access Key is the **SHA-256 of the token value**, so the token value alone is enough to rebuild both |
+| B2 key | keyID + applicationKey, from wherever you stored them at creation |
+
+This works from any machine with rclone. Define the remotes with env vars so
+nothing lands in a config file:
+
 ```bash
-# Inside a pod that has the tas-backup-credentials env (or configure rclone locally)
-rclone copy R2:tas-backups/db/<TIMESTAMP> ./restore/<TIMESTAMP> --progress
-rclone copy B2:tas-backups/db/<TIMESTAMP> ./restore/<TIMESTAMP> --progress   # break-glass
+export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare RCLONE_CONFIG_R2_REGION=auto
+export RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true      # token is bucket-scoped; CreateBucket is denied
+export RCLONE_CONFIG_R2_ENDPOINT=https://93b0654e0bb9608676005a45cc10bfd8.r2.cloudflarestorage.com
+read -rp  "R2 Access Key ID: "            RCLONE_CONFIG_R2_ACCESS_KEY_ID;     export RCLONE_CONFIG_R2_ACCESS_KEY_ID
+read -rsp "R2 Secret Access Key: "        RCLONE_CONFIG_R2_SECRET_ACCESS_KEY; echo; export RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
+
+# The decrypting layer on top of the raw bucket
+read -rsp "crypt-password: " CP; echo
+read -rsp "crypt-salt: "     CS; echo
+export RCLONE_CONFIG_R2C_TYPE=crypt RCLONE_CONFIG_R2C_REMOTE=R2:tas-backups
+export RCLONE_CONFIG_R2C_PASSWORD="$(rclone obscure "$CP")" RCLONE_CONFIG_R2C_PASSWORD2="$(rclone obscure "$CS")"
+unset CP CS
+
+rclone lsf R2C:db/                                  # restore points, decrypted names
+rclone copy R2C:db/<TIMESTAMP> ./restore/<TIMESTAMP> --progress
+cd ./restore/<TIMESTAMP> && awk '/^  [0-9a-f]{64}/ {print $1"  "$2}' MANIFEST | sha256sum -c -
 ```
+
+For B2, the break-glass copy (databases only), replace the R2 lines with
+`RCLONE_CONFIG_B2_TYPE=b2`, `RCLONE_CONFIG_B2_ACCOUNT=<keyID>`,
+`RCLONE_CONFIG_B2_KEY=<applicationKey>`, and wrap it as
+`RCLONE_CONFIG_B2C_REMOTE=B2:<b2-bucket>` with the **same** passphrase.
+
+If `rclone lsf R2C:db/` prints nothing while the raw `rclone lsf R2:tas-backups`
+does list objects, **the passphrase is wrong**. Crypt skips names it cannot
+decrypt instead of erroring. Check it before concluding the backups are gone.
+
+The files you end up with are byte-identical to the local set (verified by
+sha256 on 2026-09-17), so every per-engine procedure below applies unchanged.
 
 ---
 
@@ -279,7 +321,7 @@ look there for a specific object that was lost rather than a whole-bucket event.
 rclone copy /backup/minio/current/<bucket> MINIOSRC:<bucket> --progress
 
 # ...or from offsite
-rclone copy R2:tas-backups/minio/current/<bucket> MINIOSRC:<bucket> --progress
+rclone copy R2C:minio/current/<bucket> MINIOSRC:<bucket> --progress   # R2C = the crypt remote from §2
 
 # A single object that was deleted upstream
 rclone lsf /backup/minio/superseded/ --dirs-only         # find the run
