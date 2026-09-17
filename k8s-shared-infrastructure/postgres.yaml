@@ -99,32 +99,29 @@ spec:
     app: postgres-shared
 
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: postgres-shared-nodeport
-  namespace: tas-shared
-  labels:
-    app: postgres-shared
-    component: database
-spec:
-  type: NodePort
-  ports:
-  - port: 5432
-    targetPort: 5432
-    nodePort: 30432
-    protocol: TCP
-    name: postgres
-  selector:
-    app: postgres-shared
-
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: postgres-shared-secret
-  namespace: tas-shared
-type: Opaque
-data:
-  username: dGFzdXNlcg==  # tasuser (base64)
-  password: dGFzcGFzc3dvcmQ=  # taspassword (base64)
+# SEC-21 (2026-09-17) - two resources were deliberately removed from this file.
+#
+# 1. Service/postgres-shared-nodeport (NodePort 30432)
+#    PostgreSQL was reachable from anywhere on the node's network using a
+#    password that was committed in public repos. Deleted from the cluster.
+#    Reach the database with a port-forward instead:
+#      kubectl port-forward -n tas-shared svc/postgres-shared 5432:5432
+#
+# 2. Secret/postgres-shared-secret
+#    It carried the default password documented in CLAUDE.md, which was also
+#    the live production value. Rotated 2026-09-17. The Secret is left out
+#    of this manifest rather than placeholdered: `kubectl apply` records the
+#    keys it manages, so a file that omits `password` DELETES that key from the
+#    live Secret, and a file with a placeholder overwrites it with a dead value.
+#    Both break every consumer. Omitting the whole resource makes `apply` leave
+#    it alone.
+#
+#    The live value lives in `aether-secrets/Shared-Postgres-Password`, whose
+#    header lists every Secret that has to be rotated with it. Seed a fresh
+#    cluster before anything connects:
+#      kubectl create secret generic postgres-shared-secret -n tas-shared \
+#        --from-literal=username=tasuser \
+#        --from-literal=password="$(tail -1 aether-secrets/Shared-Postgres-Password)"
+#
+#    Git history still holds the old string, which is why rotation - not
+#    scrubbing - is what actually closed SEC-21.

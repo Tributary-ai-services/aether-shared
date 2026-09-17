@@ -804,6 +804,14 @@ spec:
               key: admin-password
         - name: GF_PATHS_PROVISIONING
           value: /etc/grafana/provisioning
+        # SEC-21: supplies $PG_AUDIMODAL_PASSWORD to the provisioned
+        # PostgreSQL-AudiModal datasource above, so the shared database
+        # password is not written into this ConfigMap.
+        - name: PG_AUDIMODAL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-pg-password
+              key: PG_AUDIMODAL_PASSWORD
         resources:
           requests:
             memory: "512Mi"
@@ -952,13 +960,16 @@ data:
         type: postgres
         uid: pg-audimodal
         orgId: 1
-        version: 1
+        version: 2
         access: proxy
         url: postgres-shared:5432
         database: audimodal
         user: tasuser
         secureJsonData:
-          password: taspassword
+          # SEC-21: Grafana expands $VAR in provisioning files from its own
+          # environment, so the password is supplied by Secret
+          # tas-shared/grafana-pg-password rather than written here.
+          password: $PG_AUDIMODAL_PASSWORD
         jsonData:
           sslmode: disable
           maxOpenConns: 5
