@@ -29,7 +29,10 @@ spec:
         - name: REDIS_ADDR
           value: "redis-shared:6379"
         - name: REDIS_PASSWORD
-          value: ""
+          valueFrom:
+            secretKeyRef:
+              name: redis-shared-auth
+              key: password
         resources:
           requests:
             cpu: 50m

@@ -30,10 +30,19 @@ spec:
         ports:
         - containerPort: 6379
           name: redis
+        # requirepass, from the Secret, never a literal here (SEC-24).
+        # `sh -c` because redis-server does not expand $VARS in its own args;
+        # `exec` so redis stays PID 1 and receives SIGTERM directly.
         command:
-        - redis-server
-        - --appendonly
-        - "yes"
+        - sh
+        - -c
+        - exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-shared-auth
+              key: password
         resources:
           requests:
             memory: "256Mi"
@@ -44,18 +53,26 @@ spec:
         volumeMounts:
         - name: redis-data
           mountPath: /data
+        # The probes MUST authenticate. A bare `redis-cli ping` against a
+        # password-protected server returns NOAUTH and exits non-zero, so
+        # leaving these as they were would have had the kubelet kill this pod
+        # in a loop the moment requirepass took effect.
+        # --no-auth-warning keeps the "using a password on the command line"
+        # notice off stderr; the password comes from the env, not argv.
         livenessProbe:
           exec:
             command:
-            - redis-cli
-            - ping
+            - sh
+            - -c
+            - redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           exec:
             command:
-            - redis-cli
-            - ping
+            - sh
+            - -c
+            - redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG
           initialDelaySeconds: 5
           periodSeconds: 5
       volumes:
@@ -87,9 +104,10 @@ spec:
 # `kubectl port-forward -n tas-shared svc/redis-shared 6379:6379` — it is
 # authenticated by your kubeconfig and leaves nothing listening on the LAN.
 #
-# NOTE: this Deployment still runs with no `requirepass` (see SEC-24's second
-# half). Dropping the NodePort removed the LAN exposure, not the missing
-# authentication — treat in-cluster access as unauthenticated until that lands.
+# Authentication landed 2026-09-18: the server now runs with `--requirepass`
+# from `tas-shared/redis-shared-auth`, and every consumer sends it. The value
+# is documented in aether-secrets/Shared-Redis-Password, which lists all five
+# Secrets that move together on a rotation.
 apiVersion: v1
 kind: Service
 metadata:
