@@ -64,6 +64,32 @@ spec:
           claimName: redis-shared-pvc
 
 ---
+# ClusterIP ONLY — do not add a NodePort to this Service, and do not re-create
+# `redis-shared-nodeport` (SEC-24, 2026-09-18).
+#
+# A NodePort on 30379 existed here from 2026-01 until 2026-09-18. It was never
+# committed to this repo — it was applied straight to the cluster — so nothing
+# in git recorded that redis-shared was reachable from the LAN. Measured from a
+# workstation on the LAN on 2026-09-18, before it was deleted:
+#
+#   192.168.68.63:30379  ->  +PONG
+#   ACL WHOAMI           ->  default        (user default on nopass ~* &* +@all)
+#   GET federation:servers:neo4j-mcp
+#     -> {"id":"neo4j-mcp","endpoint":"http://neo4j-mcp...:8000",...}
+#
+# That is full read/write/FLUSHALL for anyone on the network. What lives in
+# here is the MCP federation registry that `prod-tas-mcp` reads, so the sharp
+# end is not cached text: writing `federation:servers:<id>.endpoint` repoints
+# that server's tool traffic at a host of the writer's choosing.
+#
+# The shared PostgreSQL NodePort (30432) was removed for the same reason during
+# SEC-21. If you need redis-cli access from a workstation, use
+# `kubectl port-forward -n tas-shared svc/redis-shared 6379:6379` — it is
+# authenticated by your kubeconfig and leaves nothing listening on the LAN.
+#
+# NOTE: this Deployment still runs with no `requirepass` (see SEC-24's second
+# half). Dropping the NodePort removed the LAN exposure, not the missing
+# authentication — treat in-cluster access as unauthenticated until that lands.
 apiVersion: v1
 kind: Service
 metadata:
