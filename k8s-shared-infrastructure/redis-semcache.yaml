@@ -69,9 +69,27 @@ spec:
         # eviction faithfully written to the AOF. volatile-lru only evicts keys
         # that have a TTL, which is precisely the cache entries and never the
         # corpus.
+        #
+        # requirepass comes from the Secret and is interpolated by Kubernetes
+        # into REDIS_ARGS via $(REDIS_PASSWORD) — so the password is never a
+        # literal in this file. REDIS_PASSWORD must be declared BEFORE
+        # REDIS_ARGS: $(VAR) expansion only sees variables defined earlier in
+        # the same container's env list (SEC-26).
+        #
+        # This instance had no password at all until 2026-09-18 — the same
+        # `user default on nopass +@all` as redis-shared. It never had a
+        # NodePort, so it was in-cluster only, but it is the instance holding
+        # customer-visible cache content: the C4 semantic cache, and
+        # aiqg:sclabels:pairs. A poisoned entry here is served to a customer
+        # as a model response. Its only consumer is llm-router-aiqg.
         env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-semcache-auth
+              key: password
         - name: REDIS_ARGS
-          value: "--save '' --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru"
+          value: "--save '' --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru --requirepass $(REDIS_PASSWORD)"
         ports:
         - containerPort: 6379
           name: redis
@@ -91,14 +109,17 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "250m"
+        # Both probes MUST authenticate now. A bare `redis-cli ping` against a
+        # password-protected server returns NOAUTH and exits non-zero, which
+        # would have the kubelet restart this pod in a loop.
         livenessProbe:
           exec:
-            command: ["redis-cli", "ping"]
+            command: ["sh", "-c", 'redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG']
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           exec:
-            command: ["redis-cli", "ping"]
+            command: ["sh", "-c", 'redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG']
           initialDelaySeconds: 5
           periodSeconds: 5
       volumes:

@@ -94,10 +94,20 @@ spec:
 #   GET federation:servers:neo4j-mcp
 #     -> {"id":"neo4j-mcp","endpoint":"http://neo4j-mcp...:8000",...}
 #
-# That is full read/write/FLUSHALL for anyone on the network. What lives in
-# here is the MCP federation registry that `prod-tas-mcp` reads, so the sharp
-# end is not cached text: writing `federation:servers:<id>.endpoint` repoints
-# that server's tool traffic at a host of the writer's choosing.
+# That is full read/write/FLUSHALL for anyone on the network.
+#
+# Two kinds of data live here, and an earlier version of this comment got the
+# second one wrong. (1) The MCP federation registry that `prod-tas-mcp` reads
+# — writing `federation:servers:<id>.endpoint` repoints that server's tool
+# traffic at a host of the writer's choosing. (2) The AIQG C1 response cache:
+# `internal/server/server.go` builds ONE `sharedRedis` client from
+# `AIQG_LINKAGE_REDIS_URL` and hands it to `responsecache.NewRedisCache`, and
+# `AIQG_RESPONSE_CACHE_ENABLED` is true in production. So cached model
+# responses do land in this instance, and a poisoned entry here is served to a
+# customer as an answer. A snapshot can look like federation keys only — the
+# response cache TTL is 10m, so entries come and go.
+#
+# What is NOT here is the SEMANTIC cache; that is `redis-semcache` (SEC-26).
 #
 # The shared PostgreSQL NodePort (30432) was removed for the same reason during
 # SEC-21. If you need redis-cli access from a workstation, use
