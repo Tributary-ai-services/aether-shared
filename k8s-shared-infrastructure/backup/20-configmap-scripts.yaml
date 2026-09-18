@@ -125,6 +125,117 @@ data:
     gzip -9 "$DEST/neo4j.cypher"
     echo "==> neo4j complete"
 
+  publish-metrics.sh: |
+    #!/bin/sh
+    # Publishes tas-backup's outcome to Pushgateway (OPS-21). Sourced by
+    # finalize.sh; also sourced by reseed-metrics.sh to re-publish without
+    # running a backup.
+    #
+    # THE PVC IS THE SOURCE OF TRUTH, not the gateway. Every publish recomputes
+    # every gauge from LATEST and the marker files, so re-seeding after a
+    # pushgateway restart is just "run this again" and a failed run reports its
+    # failure without disturbing the last good timestamp.
+    #
+    # Pushgateway POST semantics, measured here 2026-09-18 and worth knowing:
+    # POST replaces only the metric FAMILIES present in the body and leaves the
+    # rest of the group untouched -- it is PUT that replaces a whole group, and
+    # busybox wget can send neither PUT nor DELETE. So a family that stops being
+    # published does not disappear; it freezes at its last value and quietly
+    # goes stale. That is why every gauge here is published unconditionally,
+    # including a zero, rather than being omitted when it does not apply.
+    #
+    # Requires: BACKUP_ROOT, PUSHGATEWAY_URL (unset = publish nothing).
+    FAILURE_MARK="${BACKUP_ROOT}/.last-failure"
+    OFFSITE_MARK_PREFIX="${BACKUP_ROOT}/.offsite-"
+
+    ts_epoch() {
+      # Backup timestamps are YYYYmmddTHHMMSSZ, which busybox date parses with -D.
+      date -u -D "%Y%m%dT%H%M%SZ" -d "$1" +%s 2>/dev/null || echo ""
+    }
+
+    publish_metrics() {
+      [ -n "${PUSHGATEWAY_URL:-}" ] || return 0
+
+      _body=/tmp/tas-backup-metrics.prom
+      : > "$_body"
+
+      # Last SUCCESS is read from LATEST, which is written only after a set has
+      # been sealed, promoted, mirrored and (when configured) verified offsite.
+      if [ -f "${BACKUP_ROOT}/db/LATEST" ]; then
+        _latest="$(cat "${BACKUP_ROOT}/db/LATEST")"
+        _ok="$(ts_epoch "$_latest")"
+        if [ -n "$_ok" ]; then
+          echo "# HELP tas_backup_last_success_timestamp_seconds Unix time of the last completed tas-backup run." >> "$_body"
+          echo "# TYPE tas_backup_last_success_timestamp_seconds gauge" >> "$_body"
+          echo "tas_backup_last_success_timestamp_seconds ${_ok}" >> "$_body"
+        fi
+      fi
+
+      # Published even when there has been no failure (as 0), so that a run
+      # which recovers actively overwrites the old value instead of leaving a
+      # stale one behind for TASBackupRunFailed to keep firing on.
+      if [ -f "$FAILURE_MARK" ]; then
+        _failed="$(cat "$FAILURE_MARK")"
+      else
+        _failed=0
+      fi
+      echo "# HELP tas_backup_last_failure_timestamp_seconds Unix time of the last tas-backup run that failed after the dump stage; 0 if none." >> "$_body"
+      echo "# TYPE tas_backup_last_failure_timestamp_seconds gauge" >> "$_body"
+      echo "tas_backup_last_failure_timestamp_seconds ${_failed}" >> "$_body"
+
+      for _m in "${OFFSITE_MARK_PREFIX}"*; do
+        [ -f "$_m" ] || continue
+        _target="${_m##*/.offsite-}"
+        echo "# TYPE tas_backup_offsite_last_success_timestamp_seconds gauge" >> "$_body"
+        echo "tas_backup_offsite_last_success_timestamp_seconds{target=\"${_target}\"} $(cat "$_m")" >> "$_body"
+      done
+
+      _points="$( (cd "${BACKUP_ROOT}/db" 2>/dev/null && ls -1d 2*/ 2>/dev/null | wc -l) || echo 0 )"
+      echo "# HELP tas_backup_local_restore_points Number of complete restore points held locally." >> "$_body"
+      echo "# TYPE tas_backup_local_restore_points gauge" >> "$_body"
+      echo "tas_backup_local_restore_points ${_points}" >> "$_body"
+
+      _free="$(df -kP "${BACKUP_ROOT}" 2>/dev/null | awk 'NR==2 {print $4 * 1024}')"
+      if [ -n "$_free" ]; then
+        echo "# HELP tas_backup_local_free_bytes Free space on the backup volume." >> "$_body"
+        echo "# TYPE tas_backup_local_free_bytes gauge" >> "$_body"
+        echo "tas_backup_local_free_bytes ${_free}" >> "$_body"
+      fi
+
+      # A monitoring failure must never fail a good backup, so this is
+      # best-effort and loud rather than fatal.
+      if wget -q -T 15 -O /dev/null --post-file="$_body" \
+           "${PUSHGATEWAY_URL}/metrics/job/tas_backup"; then
+        echo "==> published backup metrics to pushgateway"
+      else
+        echo "!! could not publish backup metrics to ${PUSHGATEWAY_URL} -- the" >&2
+        echo "   backup itself is unaffected, but staleness alerting is blind" >&2
+      fi
+    }
+
+  reseed-metrics.sh: |
+    #!/bin/sh
+    # Re-publishes the current backup state to Pushgateway without running a
+    # backup (OPS-21). Use this after pushgateway-shared loses its persistence
+    # file, when TASBackupMetricMissing fires but backups are in fact fine:
+    #
+    #   kubectl delete job tas-backup-reseed-metrics -n tas-shared --ignore-not-found
+    #   kubectl apply -f 40-job-reseed-metrics.yaml
+    #
+    # (A Job rather than "kubectl create job --from=cronjob/tas-backup", which
+    # cannot override the command and would run a whole backup instead.)
+    #
+    # Reads only LATEST and the marker files, so it cannot invent a restore
+    # point that does not exist on disk.
+    set -eu
+    . /scripts/publish-metrics.sh
+    if [ -z "${PUSHGATEWAY_URL:-}" ]; then
+      echo "FATAL: PUSHGATEWAY_URL is not set -- nothing to publish to" >&2
+      exit 1
+    fi
+    publish_metrics
+    echo "==> re-seeded from ${BACKUP_ROOT}"
+
   finalize.sh: |
     #!/bin/sh
     # Seals the staged database dumps, mirrors MinIO, pushes both offsite, and
@@ -136,6 +247,28 @@ data:
 
     STAGE="${BACKUP_ROOT}/db/.in-progress/${BACKUP_TS}"
     FINAL="${BACKUP_ROOT}/db/${BACKUP_TS}"
+
+    # ----------------------------------------------------------- observability
+    # OPS-21. A CronJob pod cannot be scraped -- by the time Prometheus came
+    # looking it would be long gone -- so the run publishes its own outcome to
+    # pushgateway-shared and Prometheus alerts on that timestamp going stale.
+    # Until this existed, a backup that simply stopped running produced no
+    # error, no failed pod and no log line anyone read: silence was
+    # indistinguishable from success.
+    #
+    # The helpers live in their own file because re-seeding the gateway after a
+    # restart must not require running a backup -- see reseed-metrics.sh.
+    . /scripts/publish-metrics.sh
+
+    on_exit() {
+      _rc=$?
+      if [ "$_rc" -ne 0 ]; then
+        date +%s > "$FAILURE_MARK" 2>/dev/null || true
+        publish_metrics || true
+      fi
+      exit "$_rc"
+    }
+    trap on_exit EXIT
 
     if [ ! -d "$STAGE" ]; then
       echo "FATAL: staging directory $STAGE does not exist" >&2
@@ -236,6 +369,7 @@ data:
       remote="$1"   # a crypt remote -- never the raw bucket
       label="$2"
       scope="$3"
+      key="$4"      # short target label for the offsite metric (OPS-21)
 
       echo "==> offsite: ${label} (${scope}, encrypted)"
       # Versioned database dumps -- ~8 MB per run, so hundreds of restore
@@ -255,12 +389,16 @@ data:
           --backup-dir "${remote}:minio/superseded/${BACKUP_TS}" \
           --stats-one-line --stats 30s --retries 3
       fi
+      # Written only past cryptcheck, so the marker means "a readable copy is
+      # up there", not "an upload was attempted". TASBackupOffsiteStalled
+      # watches this per target (OPS-21).
+      date +%s > "${OFFSITE_MARK_PREFIX}${key}"
       echo "  ${label} ok"
     }
 
     if [ -n "${R2_ACCESS_KEY_ID:-}" ]; then
       wrap_crypt R2C "R2:${R2_BUCKET}"
-      push_offsite R2C "Cloudflare R2" full
+      push_offsite R2C "Cloudflare R2" full r2
     else
       echo "!! Cloudflare R2 not configured -- no offsite copy written"
       OFFSITE_SKIPPED="${OFFSITE_SKIPPED} r2"
@@ -268,7 +406,7 @@ data:
 
     if [ -n "${B2_ACCOUNT_ID:-}" ]; then
       wrap_crypt B2C "B2:${B2_BUCKET}"
-      push_offsite B2C "Backblaze B2" db-only
+      push_offsite B2C "Backblaze B2" db-only b2
     else
       echo "!! Backblaze B2 not configured -- no break-glass copy written"
       OFFSITE_SKIPPED="${OFFSITE_SKIPPED} b2"
@@ -333,3 +471,9 @@ data:
       fi
     fi
     echo "================================================================"
+
+    # Last, so that reaching it means the whole run succeeded. The success
+    # timestamp is read back from LATEST rather than from the clock, so what
+    # Prometheus reports is the restore point that actually exists on disk.
+    rm -f "$FAILURE_MARK"
+    publish_metrics
