@@ -1,0 +1,58 @@
+---
+# Re-publish the backup's health metrics without running a backup (OPS-21).
+#
+# WHEN YOU NEED THIS: TASBackupMetricMissing has fired, meaning
+# tas_backup_last_success_timestamp_seconds is absent and backup staleness is
+# no longer being detected. The usual cause is pushgateway-shared losing its
+# persistence file. Backups themselves are unaffected — this Job reads LATEST
+# and the offsite markers off the backup volume and pushes them again, so it
+# cannot report a restore point that does not exist on disk.
+#
+#   kubectl delete job tas-backup-reseed-metrics -n tas-shared --ignore-not-found
+#   kubectl apply -f 40-job-reseed-metrics.yaml
+#
+# It mounts the same ReadWriteOnce PVC as the CronJob, so do not run it while a
+# backup is running.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tas-backup-reseed-metrics
+  namespace: tas-shared
+  labels:
+    project: tas
+    tier: shared-infrastructure
+    component: backup
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: tas-backup
+        component: backup
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: false
+        fsGroup: 0
+      volumes:
+        - name: backups
+          persistentVolumeClaim:
+            claimName: tas-backups
+        - name: scripts
+          configMap:
+            name: tas-backup-scripts
+            defaultMode: 0755
+      containers:
+        - name: reseed
+          # Same image as finalize, so the same busybox wget and date -D.
+          image: rclone/rclone:1.68
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/scripts/reseed-metrics.sh"]
+          env:
+            - name: BACKUP_ROOT
+              value: /backup
+            - name: PUSHGATEWAY_URL
+              value: "http://pushgateway-shared.tas-shared.svc.cluster.local:9091"
+          volumeMounts:
+            - { name: backups, mountPath: /backup }
+            - { name: scripts, mountPath: /scripts }

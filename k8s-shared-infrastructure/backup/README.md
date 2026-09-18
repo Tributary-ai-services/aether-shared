@@ -115,6 +115,57 @@ kubectl -n tas-shared logs job/tas-backup-manual-1 -c dump-neo4j
 kubectl -n tas-shared logs job/tas-backup-manual-1 -c finalize
 ```
 
+## Alerting (OPS-21)
+
+Until 2026-09-18 nothing would have noticed if this CronJob stopped running.
+There is no kube-state-metrics in this cluster, so
+`kube_cronjob_status_last_successful_time` is not a series Prometheus can alert
+on — and a backup that silently stops producing sets looks exactly like one
+that is working. That is the same failure shape that hid a 13-day outage in
+OPS-19 and 20 days of unsent digests in OPS-24: **silence read as success.**
+
+A CronJob pod cannot be scraped — by the time Prometheus came looking it has
+exited — so the run pushes its own outcome to `pushgateway-shared` and
+Prometheus alerts on the timestamp going stale.
+
+| metric | meaning |
+|---|---|
+| `tas_backup_last_success_timestamp_seconds` | from `db/LATEST`, so it is the restore point that actually exists on disk |
+| `tas_backup_last_failure_timestamp_seconds` | set by finalize.sh's exit trap; `0` when the last run was clean |
+| `tas_backup_offsite_last_success_timestamp_seconds{target}` | written only past `cryptcheck`, so it means "a readable copy is up there" |
+| `tas_backup_local_restore_points` | complete sets held locally |
+| `tas_backup_local_free_bytes` | free space on the backup volume |
+
+| alert | fires when |
+|---|---|
+| `TASBackupStalled` (critical) | no successful run in 26h — one daily cycle plus the 2h `startingDeadlineSeconds` |
+| `TASBackupMetricMissing` (critical) | the health metric itself is absent for 30m, so staleness is no longer being watched |
+| `TASBackupRunFailed` (warning) | the last run failed after the dump stage — faster than waiting 26h |
+| `TASBackupOffsiteStalled` (warning) | no verified offsite push in 26h, i.e. backups may be local-only |
+
+Two things to know before touching this:
+
+- **The PVC is the source of truth, not the gateway.** Every publish recomputes
+  every gauge from `LATEST` and the marker files, so nothing has to be kept in
+  sync and a re-publish can never invent a restore point.
+- **Pushgateway POST replaces only the metric families in the body**, not the
+  whole group — that is `PUT`, and busybox `wget` can send neither `PUT` nor
+  `DELETE`. A family that stops being published freezes at its last value
+  instead of disappearing, which is why every gauge is published on every run
+  even when the answer is zero.
+
+If `TASBackupMetricMissing` fires but backups are in fact fine (usually
+`pushgateway-shared` lost its persistence file), re-publish without running a
+backup:
+
+```bash
+kubectl delete job tas-backup-reseed-metrics -n tas-shared --ignore-not-found
+kubectl apply -f 40-job-reseed-metrics.yaml
+```
+
+That mounts the same ReadWriteOnce PVC as the CronJob, so don't run it while a
+backup is running.
+
 ## How it is put together
 
 The three dump steps run as **initContainers**, which Kubernetes runs in order
@@ -157,10 +208,14 @@ against production on 2026-09-14.
 
 ## Known gaps
 
-- **Nothing alerts when the backup stops running.** There is no
-  kube-state-metrics in this cluster, so CronJob failure is not a Prometheus
-  series today. A backup nobody watches decays into no backup. Tracked as
-  **OPS-21**, and it is the most important follow-up here.
+- **On a fresh install the offsite series does not exist until the first
+  successful run.** `tas_backup_offsite_last_success_timestamp_seconds` comes
+  from a marker file that only a verified (`cryptcheck`-passed) push creates,
+  and an absent series never alerts. An offsite failure in that window is still
+  caught — it fails the run, so `TASBackupRunFailed` fires — but "offsite
+  silently skipped" is not detectable until the first marker exists. Closed
+  here on 2026-09-18 by running one backup by hand; do the same after any
+  rebuild that loses the backup volume.
 - **Restoring over production is unrehearsed.** §3b and §4 of RESTORE.md are
   reviewed but unproven, because proving them means destroying production.
 - **The local copy shares a disk with the data.** Mitigated only by the offsite

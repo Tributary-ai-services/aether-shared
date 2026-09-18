@@ -1,0 +1,118 @@
+---
+# Pushgateway for batch jobs (OPS-21).
+#
+# WHY THIS EXISTS: the nightly `tas-backup` CronJob is the only protection
+# against losing this cluster's data, and until now nothing would have noticed
+# if it stopped running. There is no kube-state-metrics here, so
+# `kube_cronjob_status_last_successful_time` is not a series Prometheus can
+# alert on, and a CronJob that silently stops producing sets looks exactly like
+# one that is working. That failure shape has already happened twice in this
+# cluster on other services (OPS-19: /health returned 200 for 13 days with the
+# whole DB-backed API absent; OPS-24: the activity digest went unsent for 20
+# days) — a backup nobody watches decays into no backup.
+#
+# A CronJob pod cannot be scraped: by the time Prometheus would come looking,
+# it has exited. So the job pushes its own result here when it finishes, and
+# Prometheus alerts on the timestamp going stale. Silence is the signal.
+#
+# PERSISTENCE IS NOT OPTIONAL HERE. Pushgateway keeps pushed metrics in memory,
+# so without a persistence file a pod restart erases the last-success timestamp
+# and the staleness alert turns into a "backup missing" page about nothing —
+# for up to 24 hours, until the next run pushes again. The one thing worse than
+# no alert is an alert people learn to ignore.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pushgateway-data
+  namespace: tas-shared
+  labels:
+    app: pushgateway-shared
+    component: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # The store holds a handful of gauges. 1Gi is the smallest thing
+      # local-path will hand out without argument.
+      storage: 1Gi
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pushgateway-shared
+  namespace: tas-shared
+  labels:
+    app: pushgateway-shared
+    component: monitoring
+spec:
+  replicas: 1
+  # The PVC is ReadWriteOnce and the store is a single file: two replicas would
+  # each hold half the pushes and answer scrapes inconsistently.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pushgateway-shared
+  template:
+    metadata:
+      labels:
+        app: pushgateway-shared
+        component: monitoring
+    spec:
+      securityContext:
+        # The image runs as nobody; fsGroup makes the local-path volume
+        # writable for the persistence file.
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+        - name: pushgateway
+          # Pinned, not :latest — see OPS-14.
+          # v1.11.3 = sha256:74fa117cef2d7e383112d25139ff1c2d2e309c35389a9e0554a47136a1482e48
+          image: prom/pushgateway:v1.11.3
+          imagePullPolicy: IfNotPresent
+          args:
+            - --persistence.file=/data/pushgateway.store
+            - --persistence.interval=1m
+            - --web.listen-address=:9091
+          ports:
+            - name: http
+              containerPort: 9091
+          # Resources omitted — BestEffort QoS until profiled via Prometheus.
+          # This process holds a few dozen gauges in a map.
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: 9091 }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: { path: /-/ready, port: 9091 }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pushgateway-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pushgateway-shared
+  namespace: tas-shared
+  labels:
+    app: pushgateway-shared
+    component: monitoring
+spec:
+  type: ClusterIP
+  # Deliberately cluster-internal only. Anything that can reach this can
+  # fabricate a "the backup ran" timestamp and silence the alert.
+  selector:
+    app: pushgateway-shared
+  ports:
+    - name: http
+      port: 9091
+      targetPort: 9091

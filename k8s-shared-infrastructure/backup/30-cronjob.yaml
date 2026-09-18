@@ -127,6 +127,15 @@ spec:
                 # that losing them becomes a red job instead of a quiet warning.
                 - { name: OFFSITE_REQUIRED,       value: "false" }
 
+                # --- observability (OPS-21) ------------------------------
+                # The pod exits before anything could scrape it, so finalize.sh
+                # publishes the run's outcome here and Prometheus alerts when
+                # that timestamp goes stale. Unset = no publishing, and the
+                # backup still runs: monitoring must never be able to fail a
+                # good backup. But then nothing is watching, which is the whole
+                # problem OPS-21 exists to fix.
+                - { name: PUSHGATEWAY_URL, value: "http://pushgateway-shared.tas-shared.svc.cluster.local:9091" }
+
                 # --- source: MinIO ---------------------------------------
                 - { name: RCLONE_CONFIG_MINIOSRC_TYPE,     value: s3 }
                 - { name: RCLONE_CONFIG_MINIOSRC_PROVIDER, value: Minio }

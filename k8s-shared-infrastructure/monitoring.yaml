@@ -154,6 +154,20 @@ data:
         metrics_path: '/metrics'
         scrape_interval: 30s
 
+      # Pushgateway — batch jobs that exit before anything can scrape them
+      # (OPS-21). Today that is the nightly tas-backup CronJob.
+      #
+      # honor_labels: true is load-bearing. Without it Prometheus overwrites the
+      # job= and instance= labels the pusher set with 'pushgateway' and the
+      # gateway's own address, so every batch job's metrics collapse onto one
+      # identity and you cannot tell which job last succeeded.
+      - job_name: 'pushgateway'
+        honor_labels: true
+        static_configs:
+          - targets: ['pushgateway-shared:9091']
+        metrics_path: '/metrics'
+        scrape_interval: 30s
+
       # OpenTelemetry Collector
       - job_name: 'otel-collector'
         static_configs:
@@ -426,6 +440,107 @@ data:
                 last hour on {{ $labels.instance }}. A 535 means the SMTP
                 credential is wrong or missing; the send is retried every 15
                 minutes, and the claim is released each time.
+
+  # OPS-21. The nightly tas-backup CronJob is the only thing standing between
+  # this cluster and permanent data loss, and it cannot be scraped: the pod
+  # exits long before Prometheus would come looking. So it pushes its own
+  # result to pushgateway-shared when it finishes, and these rules alert on the
+  # timestamp going stale.
+  #
+  # The design point: a backup that stops running produces NOTHING — no error,
+  # no failed pod, no log line anybody reads. Silence is indistinguishable from
+  # success unless something watches the clock. Every alert here is therefore
+  # written against absence, not against errors.
+  backup-alerts.yml: |
+    groups:
+      - name: tas_backup
+        interval: 60s
+        rules:
+          # The one that matters. tas-backup runs at 03:30 UTC daily and
+          # pushes this only after the full set is sealed, mirrored, shipped
+          # offsite and verified by cryptcheck — so a stale value covers every
+          # failure mode at once: a failed dump, an unschedulable pod, a full
+          # disk, a suspended CronJob, a node that was off at 03:30.
+          # 26h = one daily cycle plus two hours of slack (startingDeadline is
+          # 7200s, so a late run is legitimate), which means a single missed
+          # night fires the following morning rather than going unnoticed.
+          - alert: TASBackupStalled
+            expr: time() - tas_backup_last_success_timestamp_seconds > 26 * 3600
+            for: 0m
+            labels:
+              severity: critical
+              service: tas-backup
+              component: backup
+            annotations:
+              summary: "No successful TAS backup in over 26 hours"
+              description: >
+                The last successful tas-backup run finished
+                {{ $value | humanizeDuration }} ago. Nothing has produced a
+                restore point since. Check "kubectl get jobs -n tas-shared -l
+                app=tas-backup" and the Loki stream
+                {namespace="tas-shared", app="tas-backup"}.
+
+          # Pushgateway persists its store to a PVC precisely so a restart does
+          # not erase the timestamp — but if the metric disappears anyway, the
+          # watcher itself is broken and the backup is once again unobserved.
+          # Without this rule that state reads as "no data", which looks like
+          # health on every dashboard ever made.
+          - alert: TASBackupMetricMissing
+            expr: absent(tas_backup_last_success_timestamp_seconds)
+            for: 30m
+            labels:
+              severity: critical
+              service: tas-backup
+              component: backup
+            annotations:
+              summary: "Backup health metric is not being reported"
+              description: >
+                tas_backup_last_success_timestamp_seconds has been absent for
+                30m, so backup staleness is no longer being detected. Either
+                pushgateway-shared is down or its persistence file was lost.
+                Check "up{job='pushgateway'}" first, then re-seed with the
+                LATEST file (see backup/README.md §Alerting).
+
+          # Faster than staleness, and narrower: finalize.sh traps its own
+          # failure and pushes a timestamp before exiting, so a run that gets
+          # as far as sealing and then dies reports within the minute instead
+          # of waiting 26 hours. Dump failures in the initContainers never
+          # reach this — those are caught by TASBackupStalled.
+          - alert: TASBackupRunFailed
+            expr: >
+              tas_backup_last_failure_timestamp_seconds >
+              tas_backup_last_success_timestamp_seconds
+            for: 5m
+            labels:
+              severity: warning
+              service: tas-backup
+              component: backup
+            annotations:
+              summary: "The most recent TAS backup run failed"
+              description: >
+                A tas-backup run failed after the dump stage and no successful
+                run has completed since. The staged set was never promoted, so
+                the previous restore point is still intact — but there is no
+                new one.
+
+          # The offsite copy is the only protection against losing the disk,
+          # and it can fail on its own (expired R2 token, bucket policy, quota)
+          # while the local set is written perfectly. finalize.sh only warns
+          # about this today unless OFFSITE_REQUIRED=true, so without this rule
+          # a cluster can spend weeks with local-only backups.
+          - alert: TASBackupOffsiteStalled
+            expr: time() - tas_backup_offsite_last_success_timestamp_seconds > 26 * 3600
+            for: 0m
+            labels:
+              severity: warning
+              service: tas-backup
+              component: backup
+            annotations:
+              summary: "TAS backup offsite copy ({{ $labels.target }}) is stale"
+              description: >
+                No verified offsite push to {{ $labels.target }} in
+                {{ $value | humanizeDuration }}. Backups may exist only on
+                /dev/sda1, the same disk as the data they protect.
 
   semcache-judge-alerts.yml: |
     groups:
