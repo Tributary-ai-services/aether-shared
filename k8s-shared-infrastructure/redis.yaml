@@ -30,10 +30,19 @@ spec:
         ports:
         - containerPort: 6379
           name: redis
+        # requirepass, from the Secret, never a literal here (SEC-24).
+        # `sh -c` because redis-server does not expand $VARS in its own args;
+        # `exec` so redis stays PID 1 and receives SIGTERM directly.
         command:
-        - redis-server
-        - --appendonly
-        - "yes"
+        - sh
+        - -c
+        - exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-shared-auth
+              key: password
         resources:
           requests:
             memory: "256Mi"
@@ -44,18 +53,26 @@ spec:
         volumeMounts:
         - name: redis-data
           mountPath: /data
+        # The probes MUST authenticate. A bare `redis-cli ping` against a
+        # password-protected server returns NOAUTH and exits non-zero, so
+        # leaving these as they were would have had the kubelet kill this pod
+        # in a loop the moment requirepass took effect.
+        # --no-auth-warning keeps the "using a password on the command line"
+        # notice off stderr; the password comes from the env, not argv.
         livenessProbe:
           exec:
             command:
-            - redis-cli
-            - ping
+            - sh
+            - -c
+            - redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           exec:
             command:
-            - redis-cli
-            - ping
+            - sh
+            - -c
+            - redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG
           initialDelaySeconds: 5
           periodSeconds: 5
       volumes:
@@ -77,19 +94,30 @@ spec:
 #   GET federation:servers:neo4j-mcp
 #     -> {"id":"neo4j-mcp","endpoint":"http://neo4j-mcp...:8000",...}
 #
-# That is full read/write/FLUSHALL for anyone on the network. What lives in
-# here is the MCP federation registry that `prod-tas-mcp` reads, so the sharp
-# end is not cached text: writing `federation:servers:<id>.endpoint` repoints
-# that server's tool traffic at a host of the writer's choosing.
+# That is full read/write/FLUSHALL for anyone on the network.
+#
+# Two kinds of data live here, and an earlier version of this comment got the
+# second one wrong. (1) The MCP federation registry that `prod-tas-mcp` reads
+# — writing `federation:servers:<id>.endpoint` repoints that server's tool
+# traffic at a host of the writer's choosing. (2) The AIQG C1 response cache:
+# `internal/server/server.go` builds ONE `sharedRedis` client from
+# `AIQG_LINKAGE_REDIS_URL` and hands it to `responsecache.NewRedisCache`, and
+# `AIQG_RESPONSE_CACHE_ENABLED` is true in production. So cached model
+# responses do land in this instance, and a poisoned entry here is served to a
+# customer as an answer. A snapshot can look like federation keys only — the
+# response cache TTL is 10m, so entries come and go.
+#
+# What is NOT here is the SEMANTIC cache; that is `redis-semcache` (SEC-26).
 #
 # The shared PostgreSQL NodePort (30432) was removed for the same reason during
 # SEC-21. If you need redis-cli access from a workstation, use
 # `kubectl port-forward -n tas-shared svc/redis-shared 6379:6379` — it is
 # authenticated by your kubeconfig and leaves nothing listening on the LAN.
 #
-# NOTE: this Deployment still runs with no `requirepass` (see SEC-24's second
-# half). Dropping the NodePort removed the LAN exposure, not the missing
-# authentication — treat in-cluster access as unauthenticated until that lands.
+# Authentication landed 2026-09-18: the server now runs with `--requirepass`
+# from `tas-shared/redis-shared-auth`, and every consumer sends it. The value
+# is documented in aether-secrets/Shared-Redis-Password, which lists all five
+# Secrets that move together on a rotation.
 apiVersion: v1
 kind: Service
 metadata:
