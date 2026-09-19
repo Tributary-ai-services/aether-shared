@@ -58,12 +58,40 @@ is_expected_skip() {
   esac
 }
 
-mapfile -t DIRS < <(
+# Only ROOT kustomizations are diffed. A directory listed in another
+# kustomization's `resources:` is a component, never applied on its own, and
+# rendering it standalone omits whatever the parent contributes — labels,
+# namespace, name prefixes. Diffing it then reports drift that does not exist:
+# before this filter, 10 of 17 "drifted" trees were tas-mcp-servers children
+# whose only difference was the parent's project/tier/service labels. An
+# inflated number is not a harmless one; it is what makes people stop reading
+# the report.
+mapfile -t ALL < <(
   find "$ROOT" -maxdepth 5 -name kustomization.yaml \
     -not -path '*/node_modules/*' -not -path '*/.claude/*' \
     -not -path '*/mirror/*' -not -path '*/.docwt-*' 2>/dev/null |
   xargs -r -n1 dirname | sort -u
 )
+mapfile -t CHILDREN < <(
+  for k in "${ALL[@]}"; do
+    # `resources:` entries that are themselves kustomize directories
+    awk '/^resources:/{f=1;next} /^[^ -]/{f=0} f && /^[[:space:]]*-[[:space:]]/{sub(/^[[:space:]]*-[[:space:]]*/,"");print}' \
+      "$k/kustomization.yaml" 2>/dev/null |
+    while read -r r; do
+      [[ -z "$r" ]] && continue
+      p="$(cd "$k" 2>/dev/null && cd "$r" 2>/dev/null && pwd)" || continue
+      [[ -f "$p/kustomization.yaml" ]] && echo "$p"
+    done
+  done | sort -u
+)
+DIRS=()
+for d in "${ALL[@]}"; do
+  skip=0
+  for c in ${CHILDREN[@]+"${CHILDREN[@]}"}; do [[ "$d" == "$c" ]] && { skip=1; break; }; done
+  ((skip)) || DIRS+=("$d")
+done
+echo "examining ${#DIRS[@]} root kustomizations (${#CHILDREN[@]} components skipped as children)"
+echo
 
 clean=0; drift=0; fail=0; skip=0
 drift_list=(); fail_list=()
