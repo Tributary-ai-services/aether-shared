@@ -451,6 +451,95 @@ data:
   # no failed pod, no log line anybody reads. Silence is indistinguishable from
   # success unless something watches the clock. Every alert here is therefore
   # written against absence, not against errors.
+  # OPS-27: manifest-vs-cluster drift, published by scripts/drift-check.sh.
+  # Its own file rather than a group inside backup-alerts.yml — the rule_files
+  # glob is /etc/prometheus/rules/*.yml, so each concern keeps its own name.
+  drift-alerts.yml: |
+    groups:
+      - name: tas_drift
+        interval: 60s
+        rules:
+          # OPS-27. `kubectl diff -k` is the only thing that says whether a
+          # kustomize tree still describes what is running, and nothing ran it
+          # — drift was found when somebody happened to look. scripts/drift-check.sh
+          # now runs it over every tree from cron and pushes the result here.
+          #
+          # The staleness rule is the one that matters, for the same reason as
+          # TASBackupStalled: it covers every way the check can stop happening
+          # at once — cron removed, workstation off, kubectl credentials
+          # expired, script erroring early.
+          - alert: TASDriftCheckStalled
+            expr: time() - tas_drift_last_success_timestamp_seconds > 26 * 3600
+            for: 0m
+            labels:
+              severity: warning
+              service: drift-check
+              component: config
+            annotations:
+              summary: "No manifest drift check in over 26 hours"
+              description: >
+                drift-check.sh last completed {{ $value | humanizeDuration }}
+                ago, so nothing currently knows whether the committed manifests
+                still match the cluster. Run
+                aether-shared/scripts/drift-check.sh by hand and check the
+                workstation crontab.
+
+          # Without this, a check that never ran at all reads as "no data",
+          # which every dashboard renders as blank rather than as alarming.
+          # This is the specific failure this whole item exists to prevent.
+          - alert: TASDriftCheckMetricMissing
+            expr: absent(tas_drift_last_success_timestamp_seconds)
+            for: 30m
+            labels:
+              severity: warning
+              service: drift-check
+              component: config
+            annotations:
+              summary: "The manifest drift check has published nothing"
+              description: >
+                tas_drift_last_success_timestamp_seconds is absent. Either the
+                check has never run since the gateway was reset, or it is
+                failing before it can publish. Silence here is not health.
+
+          # RATCHETS, not absolute targets. As of 2026-09-18 the tree has 17
+          # drifted and 7 uncheckable, each of which needs a per-repo decision
+          # about whether git or the cluster is right (OPS-27). Alerting on
+          # "> 0" today would ship an alert that is red from the first day,
+          # and an alert that is always red is one people learn to scroll past
+          # — the failure mode OPS-21 already documented.
+          #
+          # So these fire only on a REGRESSION past today's known backlog.
+          # LOWER THESE NUMBERS as the backlog is worked down; a ratchet that
+          # is never tightened is just a disabled alert with extra steps.
+          - alert: TASDriftUncheckableRising
+            expr: tas_drift_trees_uncheckable > 7
+            for: 2h
+            labels:
+              severity: warning
+              service: drift-check
+              component: config
+            annotations:
+              summary: "More kustomize trees cannot be checked than before"
+              description: >
+                {{ $value }} trees now fail to evaluate, above the 7 known on
+                2026-09-18. A newly uncheckable tree is worse than a drifted
+                one: it reports nothing rather than something wrong.
+
+          - alert: TASDriftRising
+            expr: tas_drift_trees_drifted > 17
+            for: 2h
+            labels:
+              severity: warning
+              service: drift-check
+              component: config
+            annotations:
+              summary: "More kustomize trees drifted from the cluster than before"
+              description: >
+                {{ $value }} trees differ from what is running, above the 17
+                known on 2026-09-18. Run
+                aether-shared/scripts/drift-check.sh to see which.
+
+
   backup-alerts.yml: |
     groups:
       - name: tas_backup
