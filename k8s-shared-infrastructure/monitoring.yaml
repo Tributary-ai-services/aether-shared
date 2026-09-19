@@ -511,12 +511,14 @@ data:
           # So these fire only on a REGRESSION past today's known backlog.
           # LOWER THESE NUMBERS as the backlog is worked down; a ratchet that
           # is never tightened is just a disabled alert with extra steps.
-          # Tightened 7 -> 6 on 2026-09-19 when kokoro-tts's probes were made
-          # to match live (tas-mcp-servers#23). This is the ratchet working as
-          # intended: every tree repaired lowers the bar, so the next
+          # 7 -> 6 when kokoro-tts's probes were fixed (tas-mcp-servers#23),
+          # then 6 -> 4 when drift-check stopped diffing child kustomizations:
+          # components are never applied standalone, so three of the counted
+          # failures were an artefact of measuring them that way. Every tree
+          # repaired — or correctly excluded — lowers the bar, so the next
           # regression is caught instead of hiding under the old allowance.
           - alert: TASDriftUncheckableRising
-            expr: tas_drift_trees_uncheckable > 6
+            expr: tas_drift_trees_uncheckable > 4
             for: 2h
             labels:
               severity: warning
@@ -525,12 +527,12 @@ data:
             annotations:
               summary: "More kustomize trees cannot be checked than before"
               description: >
-                {{ $value }} trees now fail to evaluate, above the 6 known on
+                {{ $value }} trees now fail to evaluate, above the 4 known on
                 2026-09-19. A newly uncheckable tree is worse than a drifted
                 one: it reports nothing rather than something wrong.
 
           - alert: TASDriftRising
-            expr: tas_drift_trees_drifted > 17
+            expr: tas_drift_trees_drifted > 7
             for: 2h
             labels:
               severity: warning
@@ -539,8 +541,9 @@ data:
             annotations:
               summary: "More kustomize trees drifted from the cluster than before"
               description: >
-                {{ $value }} trees differ from what is running, above the 17
-                known on 2026-09-18. Run
+                {{ $value }} trees differ from what is running, above the 7
+                known on 2026-09-19 (the earlier 17 counted child
+                kustomizations that are never applied on their own). Run
                 aether-shared/scripts/drift-check.sh to see which.
 
 
