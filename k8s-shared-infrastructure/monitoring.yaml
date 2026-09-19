@@ -511,8 +511,12 @@ data:
           # So these fire only on a REGRESSION past today's known backlog.
           # LOWER THESE NUMBERS as the backlog is worked down; a ratchet that
           # is never tightened is just a disabled alert with extra steps.
+          # Tightened 7 -> 6 on 2026-09-19 when kokoro-tts's probes were made
+          # to match live (tas-mcp-servers#23). This is the ratchet working as
+          # intended: every tree repaired lowers the bar, so the next
+          # regression is caught instead of hiding under the old allowance.
           - alert: TASDriftUncheckableRising
-            expr: tas_drift_trees_uncheckable > 7
+            expr: tas_drift_trees_uncheckable > 6
             for: 2h
             labels:
               severity: warning
@@ -521,8 +525,8 @@ data:
             annotations:
               summary: "More kustomize trees cannot be checked than before"
               description: >
-                {{ $value }} trees now fail to evaluate, above the 7 known on
-                2026-09-18. A newly uncheckable tree is worse than a drifted
+                {{ $value }} trees now fail to evaluate, above the 6 known on
+                2026-09-19. A newly uncheckable tree is worse than a drifted
                 one: it reports nothing rather than something wrong.
 
           - alert: TASDriftRising
