@@ -120,6 +120,29 @@ spec:
       - name: MINIO_SECRET_KEY
         value: minioadmin123
   executor:
+    # Run executors on the compute node (pinova01, tas.io/tier=compute).
+    # Deferred until the cluster LAN existed: executors read Kafka and write
+    # TimescaleDB, both pinned to um773dev, so this is the most network-
+    # sensitive workload in the cluster. Measured 2026-09-21 after the LAN
+    # went in -- 3,703 sequential connects in 10s from the far node against
+    # 3,793 locally, a 2.4% penalty. Over WiFi the hop was ~70ms with 220ms
+    # spikes, which would have been ruinous for a streaming job.
+    #
+    # The DRIVER is deliberately left unpinned: it is the coordinator, it is
+    # cheap, and moving both would gain nothing while doubling the blast
+    # radius of a node loss.
+    #
+    # preferred, not required: a streaming job that cannot schedule is worse
+    # than one running on the busier node.
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: tas.io/tier
+                  operator: In
+                  values: ["compute"]
     cores: 1
     instances: 1
     memory: 1g

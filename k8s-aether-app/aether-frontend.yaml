@@ -36,7 +36,7 @@ metadata:
     app: aether-frontend
     component: frontend
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: aether-frontend
@@ -46,6 +46,22 @@ spec:
         app: aether-frontend
         component: frontend
     spec:
+      # Spread replicas across nodes (cluster gained pinova01 2026-09-21).
+      # topologySpreadConstraints, not podAntiAffinity: a `preferred`
+      # anti-affinity was measured putting both replicas on the SAME node,
+      # because each replacement is scheduled while the pod it replaces still
+      # counts. A rollout alone may still co-locate them -- check placement
+      # and delete one pod to rebalance.
+      #
+      # ScheduleAnyway, not DoNotSchedule: with two nodes a hard constraint
+      # leaves a replica Pending whenever one node is down.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: aether-frontend
       containers:
       - name: aether-frontend
         image: registry-api.tas.scharber.com/aether-frontend:latest

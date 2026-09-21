@@ -1,0 +1,68 @@
+# MetalLB address pool and L2 advertisement for the TAS cluster.
+#
+# These objects were applied directly to the cluster and existed in no
+# repository until 2026-09-21 — the same gap that hid the redis-shared
+# NodePort (SEC-24). A rebuild from source would not have recreated
+# 192.168.68.240, the address every public ingress depends on.
+#
+# DO NOT add this file to kustomization.yaml in this directory. That
+# kustomization sets `namespace: tas-shared`, which rewrites these objects out
+# of metallb-system and MetalLB then never sees them. Verified with
+# `kubectl kustomize` on 2026-09-21: both resources came out namespaced to
+# tas-shared. Apply it on its own instead:
+#
+#     kubectl apply -f k8s-shared-infrastructure/metallb-config.yaml
+#
+# Verify with:
+#     kubectl get events -n ingress-nginx | grep nodeAssigned
+#     # expect: announcing from node "um773dev"
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: local-pool
+  namespace: metallb-system
+  labels:
+    app: metallb
+    environment: development
+    owner: john
+    project: k3s-local
+spec:
+  addresses:
+  - 192.168.68.240-192.168.68.250
+  autoAssign: true
+  avoidBuggyIPs: false
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: l2-advert
+  namespace: metallb-system
+  labels:
+    app: metallb
+    environment: development
+    owner: john
+    project: k3s-local
+spec:
+  ipAddressPools:
+  - local-pool
+  # Pinned to um773dev deliberately — do not remove without reading this.
+  #
+  # Public traffic reaches the cluster only over the WiFi subnet
+  # (192.168.68.0/22). The 10.10.0.0/24 cluster LAN added 2026-09-21 carries
+  # pod traffic only and has no route from the router.
+  #
+  # ingress-nginx is a single replica on um773dev with
+  # externalTrafficPolicy: Cluster. Announcing .240 from any other node makes
+  # every public request take a second WiFi hop via VXLAN to reach it.
+  #
+  # Measured when pinova01 joined and won the election unpinned:
+  #   grafana TTFB ~260ms  ->  ~100ms once pinned back to um773dev
+  #   node-to-node WiFi ~70ms avg (220ms peak) vs 0.4ms over the LAN
+  #
+  # This can be relaxed once ingress-nginx runs on every node that may
+  # announce, with externalTrafficPolicy: Local so traffic terminates where
+  # it lands.
+  nodeSelectors:
+  - matchLabels:
+      kubernetes.io/hostname: um773dev
