@@ -1,0 +1,38 @@
+# Workflow-controller configuration.
+#
+# The controller and its ConfigMap come from the upstream Argo install.yaml,
+# which ships this ConfigMap EMPTY. Applying this file after the upstream
+# install is what gives it content -- see deploy-argo.sh, which must apply it
+# in that order or the upstream manifest will blank it again.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workflow-controller-configmap
+  namespace: argo
+data:
+  # Defaults merged into every Workflow that does not set these itself.
+  workflowDefaults: |
+    spec:
+      # Prefer the compute node (pinova01, labelled tas.io/tier=compute).
+      # Workflow pods are bursty and batch: they should not compete for CPU or
+      # page cache with the node that hosts every database in the cluster.
+      #
+      # preferred, not required: if the compute node is unavailable, workflows
+      # still run on um773dev rather than sitting Pending. A stuck workflow is
+      # worse than a slow one.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: tas.io/tier
+                    operator: In
+                    values: ["compute"]
+
+      # Delete pods once their workflow SUCCEEDS; keep them when it fails, so
+      # a failure is still debuggable. Without this, completed pods accumulate
+      # indefinitely -- there were 52 sitting in the namespace when this was
+      # added on 2026-09-21.
+      podGC:
+        strategy: OnWorkflowSuccess

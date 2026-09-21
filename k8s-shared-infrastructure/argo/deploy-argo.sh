@@ -43,6 +43,11 @@ kubectl rollout status deployment/controller-manager -n argo-events --timeout=12
 # Step 4: Apply RBAC
 # -----------------------------------------------
 echo "[4/8] Applying RBAC resources..."
+# Must come AFTER the upstream install.yaml above, which ships this
+# ConfigMap empty and would blank it again if applied later.
+kubectl apply -f "${SCRIPT_DIR}/argo-workflows/workflow-controller-config.yaml"
+kubectl rollout restart deployment/workflow-controller -n argo
+
 kubectl apply -f "${SCRIPT_DIR}/rbac.yaml"
 
 # -----------------------------------------------
