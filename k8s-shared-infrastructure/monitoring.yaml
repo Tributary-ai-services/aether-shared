@@ -39,7 +39,13 @@ spec:
         - '--storage.tsdb.path=/prometheus'
         - '--web.console.libraries=/etc/prometheus/console_libraries'
         - '--web.console.templates=/etc/prometheus/consoles'
-        - '--storage.tsdb.retention.time=200h'
+        # 30d, raised from 200h on 2026-09-22. The resource policy's profiling
+        # step queries a 7d (168h) window; 200h left barely 32h of slack, so a
+        # single restart or scrape gap could hollow out a p95 the moment
+        # someone relied on it, and week-over-week comparison was impossible.
+        # Headroom checked first: the PVC was 6% used (274G of 4.5T) with 21k
+        # series, and the two new jobs add roughly 15k more.
+        - '--storage.tsdb.retention.time=720h'
         - '--web.enable-lifecycle'
         - '--web.enable-remote-write-receiver'
         resources:
@@ -359,6 +365,83 @@ data:
           target_label: service
         - source_labels: [__meta_kubernetes_namespace]
           target_label: namespace
+
+      # ---------------------------------------------------------------------
+      # Container resource metrics (Phase 0 of MEMORY-RIGHTSIZING-PLAN.md)
+      #
+      # Until 2026-09-22 neither of the two queries CLAUDE.md's resource
+      # policy is written around returned anything:
+      #
+      #   count({__name__=~"container_.*"})            => empty
+      #   count(kube_pod_container_resource_requests)  => empty
+      #
+      # So "run it BestEffort for a week, then set requests to the observed
+      # p95" was not a workflow anyone could actually execute, and the only
+      # usage number available was `kubectl top` — a point sample from
+      # metrics-server, which persists nothing. These two jobs are what make
+      # the policy's profiling step real.
+      # ---------------------------------------------------------------------
+
+      # cAdvisor, via the kubelet on each node. Supplies
+      # container_memory_working_set_bytes and container_cpu_usage_seconds_total
+      # — the numerators in the policy's p95 queries.
+      - job_name: 'kubernetes-cadvisor'
+        scheme: https
+        metrics_path: /metrics/cadvisor
+        # 30s, not the 15s global default: the raw payload is ~5MB per node
+        # per scrape. The keep-list below cuts what is stored, not what is
+        # transferred and parsed.
+        scrape_interval: 30s
+        # The kubelet serves this on :10250 behind bearer-token auth. The
+        # existing prometheus-shared-role already grants nodes/metrics and
+        # nodes/proxy, so no RBAC change was needed — verified by probing both
+        # kubelets with this ServiceAccount's token (HTTP 200 on each).
+        authorization:
+          type: Bearer
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          # k3s signs the kubelet certificate for the node's hostname, not for
+          # the InternalIP that service discovery produces as __address__, so
+          # verification fails on a name mismatch even though the CA is right.
+          insecure_skip_verify: true
+        # cAdvisor embeds its own collection timestamp, which lags the scrape
+        # and is not evenly spaced. Honouring it produces gaps and out-of-order
+        # samples that make rate() and quantile_over_time() unreliable — the
+        # exact functions this whole job exists to serve.
+        honor_timestamps: false
+        kubernetes_sd_configs:
+        - role: node
+        relabel_configs:
+        # role: node already sets __address__ to <InternalIP>:10250, so the
+        # address needs no rewriting. Deliberately NOT doing the usual
+        # `labelmap` of __meta_kubernetes_node_label_(.+): k3s nodes carry
+        # a dozen labels each and that would copy every one of them onto
+        # every container series.
+        - source_labels: [__meta_kubernetes_node_name]
+          target_label: node
+        metric_relabel_configs:
+        # Keep-list. The full payload is ~16.5k series per node, and ~6k of
+        # that is per-device filesystem and blkio counters this cluster has no
+        # use for. Measured 2026-09-22: 16,472 series in, 2,183 kept — an 87%
+        # reduction, with every signal the policy and its follow-on ratio
+        # alerting need still present.
+        - source_labels: [__name__]
+          action: keep
+          regex: 'container_(memory_working_set_bytes|memory_rss|memory_usage_bytes|memory_max_usage_bytes|memory_cache|spec_memory_limit_bytes|cpu_usage_seconds_total|cpu_cfs_throttled_seconds_total|cpu_cfs_periods_total|spec_cpu_quota|spec_cpu_period|oom_events_total|last_seen)|machine_(memory_bytes|cpu_cores)'
+
+      # kube-state-metrics. Supplies kube_pod_container_resource_requests —
+      # what a workload *asked for*, which is the denominator of the
+      # requested-vs-used ratio and exists in no other source.
+      #
+      # Its Service is intentionally not annotated for auto-discovery; see the
+      # note in kube-state-metrics.yaml. Scraping it twice would double ~10k
+      # series and give two job names for the same answer.
+      - job_name: 'kube-state-metrics'
+        static_configs:
+          - targets: ['kube-state-metrics:8080']
+        metrics_path: '/metrics'
+        scrape_interval: 30s
 
 ---
 apiVersion: v1
