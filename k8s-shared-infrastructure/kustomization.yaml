@@ -14,6 +14,7 @@ resources:
   - keycloak.yaml
   - monitoring.yaml
   - pushgateway.yaml
+  - kube-state-metrics.yaml
   - grafana-dashboards-audimodal.yaml
   - pgadmin.yaml
   - alertmanager.yaml
