@@ -123,10 +123,37 @@ spec:
           # are managed declaratively via kafka-topics-job.yaml; produce
           # calls now fail loudly on unknown topic.
           value: "false"
+        # Guaranteed QoS (requests == limits), per CLAUDE.md: Kafka is named
+        # in the policy's own stateful/critical-infrastructure exception list,
+        # alongside PostgreSQL, Neo4j, Keycloak and Loki.
+        #
+        # Measured 2026-09-22 (Phase 1 of MEMORY-RIGHTSIZING-PLAN.md): this
+        # broker's working set is 1,140Mi against a 1Gi request — it uses MORE
+        # than it reserves, which is the half of the right-sizing problem that
+        # causes outages rather than waste. Burstable and over its request, it
+        # was a candidate for eviction under node pressure despite being the
+        # only broker in the cluster.
+        #
+        # The ceiling is NOT being raised: limits are unchanged at 2Gi/1000m.
+        # Only the requests move up to meet them, so this changes scheduling
+        # accounting and eviction order, not what the JVM may consume. That
+        # matters because the image pins the heap: no KAFKA_HEAP_OPTS is set,
+        # so cp-kafka 7.5.0 runs its default -Xmx1G — and 1,140Mi is exactly
+        # 1G of heap plus ~140Mi of JVM and native overhead. Memory here is
+        # bounded by the heap setting, not by traffic, so a 2Gi ceiling has
+        # ~1.75x headroom over anything observed.
+        #
+        # BOTH cpu and memory must be equal for Guaranteed — one unequal
+        # resource in one container silently demotes the pod to Burstable.
+        #
+        # Re-profile after 2026-09-29, when a 7d p95 exists (cAdvisor scraping
+        # began 2026-09-22, Phase 0):
+        #   quantile_over_time(0.95, container_memory_working_set_bytes{
+        #     namespace="tas-shared",pod="kafka-shared-0",container="kafka"}[7d])
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "500m"
+            memory: "2Gi"
+            cpu: "1000m"
           limits:
             memory: "2Gi"
             cpu: "1000m"
