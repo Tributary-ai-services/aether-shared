@@ -600,8 +600,12 @@ data:
           # failures were an artefact of measuring them that way. Every tree
           # repaired — or correctly excluded — lowers the bar, so the next
           # regression is caught instead of hiding under the old allowance.
+          # 4 -> 3 on 2026-09-23: tas-mcp-servers/k8s became checkable when
+          # tas-mcp-servers#26 stopped kustomize writing labels into dbhub's
+          # immutable Deployment selector. See the note on TASDriftRising —
+          # that one tree is why the drift bar moves the other way.
           - alert: TASDriftUncheckableRising
-            expr: tas_drift_trees_uncheckable > 4
+            expr: tas_drift_trees_uncheckable > 3
             for: 2h
             labels:
               severity: warning
@@ -610,12 +614,24 @@ data:
             annotations:
               summary: "More kustomize trees cannot be checked than before"
               description: >
-                {{ $value }} trees now fail to evaluate, above the 4 known on
-                2026-09-19. A newly uncheckable tree is worse than a drifted
+                {{ $value }} trees now fail to evaluate, above the 3 known on
+                2026-09-23. A newly uncheckable tree is worse than a drifted
                 one: it reports nothing rather than something wrong.
 
+          # 7 -> 8 on 2026-09-23. Raising a ratchet is normally the wrong
+          # move, so read this before copying the pattern: nothing drifted.
+          # The measured POPULATION changed. tas-mcp-servers/k8s had been
+          # uncheckable — `kubectl diff -k` aborted on dbhub's immutable
+          # selector — so its contents were never counted either way.
+          # tas-mcp-servers#26 made it checkable and it came back DRIFT,
+          # moving one tree from the uncheckable column to this one. Both
+          # ratchets moved by one, in opposite directions, on the same tree.
+          # The honest reading is that the drift backlog was 8 all along and
+          # one eighth of it was invisible. The 39 objects behind it are
+          # nearly all pre-existing (OPS-14 image drift and friends); working
+          # them down is what should take this back to 7 and below.
           - alert: TASDriftRising
-            expr: tas_drift_trees_drifted > 7
+            expr: tas_drift_trees_drifted > 8
             for: 2h
             labels:
               severity: warning
@@ -624,8 +640,8 @@ data:
             annotations:
               summary: "More kustomize trees drifted from the cluster than before"
               description: >
-                {{ $value }} trees differ from what is running, above the 7
-                known on 2026-09-19 (the earlier 17 counted child
+                {{ $value }} trees differ from what is running, above the 8
+                known on 2026-09-23 (the earlier 17 counted child
                 kustomizations that are never applied on their own). Run
                 aether-shared/scripts/drift-check.sh to see which.
 
@@ -721,6 +737,116 @@ data:
                 {{ $value | humanizeDuration }}. Backups may exist only on
                 /dev/sda1, the same disk as the data they protect.
 
+  rightsizing-alerts.yml: |
+    # Guardrails for MEMORY-RIGHTSIZING-PLAN.md.
+    #
+    # The cluster was already right-sized once, in 2026-04, and drifted back to
+    # ~92% requested with nobody noticing until rolling updates started failing
+    # for want of headroom. Nothing watched the number. These rules are the
+    # thing that was missing, and they only became expressible on 2026-09-22
+    # when OPS-37 Phase 0 added cAdvisor and kube-state-metrics.
+    #
+    # ---------------------------------------------------------------------
+    # THE `Running|Pending` FILTER IS LOAD-BEARING. DO NOT DROP IT.
+    #
+    # kube_pod_container_resource_requests keeps a series for Succeeded and
+    # Failed pods — completed Jobs, CronJob runs, old ReplicaSet pods that
+    # terminated months ago. The scheduler counts none of them.
+    #
+    # Measured 2026-09-23: the naive sum reads 39.36 GiB against 28.57 GiB of
+    # real reservations. That is 38% high, and it is not a constant offset —
+    # it moves with how many Jobs have run lately. An unfiltered version of
+    # these rules would page about reservations that do not exist.
+    #
+    # The filtered expression reconciles exactly with `kubectl describe node`.
+    # ---------------------------------------------------------------------
+    groups:
+      - name: tas_rightsizing
+        rules:
+          # The one that predicts an outage rather than describing waste.
+          # At ~92% in 2026-04 a rolling update had no room to schedule the new
+          # ReplicaSet, so pods sat Pending and deploys wedged. 85% is chosen to
+          # fire with room to act, not at the cliff.
+          - alert: TASNodeMemoryRequestsHigh
+            expr: |
+              sum by (node) (kube_pod_container_resource_requests{resource="memory"}
+                * on (pod,namespace) group_left() (kube_pod_status_phase{phase=~"Running|Pending"} == 1))
+              / on (node) group_left() kube_node_status_allocatable{resource="memory"}
+              > 0.85
+            for: 30m
+            labels:
+              severity: warning
+              service: kubernetes
+              component: capacity
+            annotations:
+              summary: "{{ $labels.node }} has reserved {{ $value | humanizePercentage }} of its memory"
+              description: |
+                Memory REQUESTS on {{ $labels.node }} are {{ $value | humanizePercentage }} of allocatable. This is about reservations, not usage — the node may be nearly idle and still be unable to schedule anything.
+                At ~92% in 2026-04 rolling updates wedged: no room for a new ReplicaSet, pods Pending, deploys stuck.
+                Find the over-declarers, remembering that a high ratio is not automatically wrong — redis-semcache's 1Gi is a documented copy-on-write ceiling, not waste:
+                  topk(10, kube_pod_container_resource_requests{resource="memory",node="{{ $labels.node }}"}
+                    / on (pod,namespace,container) group_left() quantile_over_time(0.95, container_memory_working_set_bytes[7d]))
+                Then follow MEMORY-RIGHTSIZING-PLAN.md: lower the REQUESTS, leave the limits.
+
+          - alert: TASNodeMemoryRequestsCritical
+            expr: |
+              sum by (node) (kube_pod_container_resource_requests{resource="memory"}
+                * on (pod,namespace) group_left() (kube_pod_status_phase{phase=~"Running|Pending"} == 1))
+              / on (node) group_left() kube_node_status_allocatable{resource="memory"}
+              > 0.95
+            for: 10m
+            labels:
+              severity: critical
+              service: kubernetes
+              component: capacity
+            annotations:
+              summary: "{{ $labels.node }} is out of schedulable memory ({{ $value | humanizePercentage }})"
+              description: |
+                {{ $labels.node }} has reserved {{ $value | humanizePercentage }} of allocatable memory. A rolling update on this node will very likely stall with the new pod Pending, because there is no room to run old and new side by side.
+                This is the state the cluster was in before OPS-37. Do not wait for the next deploy to discover it.
+
+          # A ratchet, not a target. Reserved-and-idle sat at 17.5-19.2 GiB over
+          # the 12h before this shipped, so 24 GiB is real drift rather than
+          # noise. LOWER THIS NUMBER as the backlog is worked down — an alert
+          # that can never fire teaches people to ignore the whole file, and one
+          # that is always red teaches the same lesson faster.
+          - alert: TASMemoryReservedIdleHigh
+            expr: |
+              avg_over_time((
+                sum(kube_pod_container_resource_requests{resource="memory"}
+                  * on (pod,namespace) group_left() (kube_pod_status_phase{phase=~"Running|Pending"} == 1))
+                - sum(container_memory_working_set_bytes{container!=""})
+              )[1h:1m]) > 24 * 1024 * 1024 * 1024
+            for: 6h
+            labels:
+              severity: warning
+              service: kubernetes
+              component: capacity
+            annotations:
+              summary: "{{ $value | humanize1024 }}B of memory is reserved and unused cluster-wide"
+              description: |
+                Requests exceed actual usage by {{ $value | humanize1024 }}B, averaged over an hour and sustained for six. That memory is unavailable to the scheduler while doing nothing.
+                This is the drift OPS-37 exists to stop: the 2026-04 pass reclaimed it once and it came back unobserved.
+                Work MEMORY-RIGHTSIZING-PLAN.md, then LOWER THIS THRESHOLD so it keeps biting.
+
+          # Silence guard. Both series come from components added in Phase 0; if
+          # either stops being scraped every rule above silently stops
+          # evaluating and the dashboards render blank, which reads as healthy.
+          # That exact shape is OPS-19, OPS-21 and OPS-24 in this cluster.
+          - alert: TASResourceMetricsMissing
+            expr: |
+              absent(kube_pod_container_resource_requests{resource="memory"})
+              or absent(container_memory_working_set_bytes{container!=""})
+            for: 30m
+            labels:
+              severity: warning
+              service: kubernetes
+              component: monitoring
+            annotations:
+              summary: "Container resource metrics have stopped arriving"
+              description: |
+                kube-state-metrics or the cAdvisor scrape has gone away, so every capacity rule here has quietly stopped evaluating. Nothing is watching reservations, and a blank panel looks exactly like a healthy one.
+                Check: up{job="kube-state-metrics"} and up{job="kubernetes-cadvisor"} — both were added by aether-shared#89 (OPS-37 Phase 0).
   semcache-judge-alerts.yml: |
     groups:
       - name: aiqg_semcache_judge
