@@ -1,0 +1,73 @@
+# ingress-nginx — the live Helm release, written down. NOT CURRENTLY APPLIED.
+#
+# WHY THIS FILE EXISTS, AND WHY IT IS NOT APPLIED
+#
+# The controller is a real Helm release (`ingress-nginx`, chart 4.12.3,
+# appVersion 1.12.3, revision 1, installed 2025-07-01) and it is represented
+# in git nowhere. `helm get values` returns only podAnnotations and
+# service.type — everything else is chart defaults, including the 90Mi memory
+# request nobody chose.
+#
+# Three pieces of configuration exist ONLY on the cluster and in NO Helm
+# release. Measured 2026-09-23:
+#
+#   1. controller arg  --tcp-services-configmap=ingress-nginx/tcp-services
+#      (live Deployment has 10 args; the stored release has 9)
+#   2. Service port    neo4j-bolt 7687 -> 7687
+#      (live Service has 3 ports; the stored release has 2)
+#   3. ConfigMap       tcp-services  {"7687": "aether-be/neo4j:7687"}
+#      (carries only a kubectl last-applied annotation — not Helm-owned)
+#
+# Together those three are how **Neo4j Bolt** reaches the cluster:
+# 192.168.68.240:7687 negotiates Bolt 5.4 through this controller.
+#
+# A `helm upgrade` renders a manifest WITHOUT all three. Verified by dry-run
+# against chart 4.12.3 with --reuse-values: 9 args (tcp-services absent) and
+# service ports [http, https] only. Whether live keeps them then depends on
+# Helm's 3-way merge — which is not a thing to bet Neo4j on. So:
+#
+#   *** DO NOT `helm upgrade` THIS RELEASE USING ONLY THE VALUES BELOW. ***
+#
+# Applying this file as-is would be safe only once the `tcp:` block at the
+# bottom is uncommented, which reproduces the Bolt plumbing through the
+# chart's own supported mechanism. Note that doing so renames the ConfigMap
+# to `ingress-nginx-tcp` (chart convention) and orphans `tcp-services`.
+#
+# WHAT IS ALREADY LIVE BUT NOT IN THE RELEASE
+#
+# `controller.priorityClassName: system-cluster-critical` was applied on
+# 2026-09-23 with `kubectl patch`, deliberately NOT via Helm, to avoid the
+# hazard above. It is therefore cluster-only and a future `helm upgrade`
+# WILL drop it — exactly like the three items above. That was an accepted
+# trade, not an oversight: the controller was the only workload in the
+# right-sizing sweep with no priority class at all (priority 0) while being
+# the single replica serving all cluster ingress.
+#
+# See OPS-43.
+
+controller:
+  # Applied live 2026-09-23 by kubectl patch. Verified: priority 2000000000,
+  # pod ready, 0 restarts, and the Bolt plumbing survived (10 args, 3 service
+  # ports, Bolt 5.4 still negotiated through the LB).
+  priorityClassName: system-cluster-critical
+
+  # The only values the release actually carries today.
+  podAnnotations:
+    environment: development
+    owner: john
+    project: k3s-local
+  service:
+    type: LoadBalancer
+
+  # NOT SET, recorded for the next person: the memory request is the chart
+  # default of 90Mi against a measured p95 of 296Mi over 22h (3.29x). It has
+  # never been OOM-killed and has no limit, so this is a scheduling-accuracy
+  # problem rather than a stability one. Left alone deliberately — see OPS-37.
+  # resources:
+  #   requests: {cpu: 100m, memory: 320Mi}
+  #   limits:   {memory: 640Mi}
+
+# UNCOMMENT BEFORE ANY helm upgrade — this is the Bolt plumbing that is
+# currently live-only. Without it an upgrade removes Neo4j Bolt.
+# tcp:
+#   "7687": "aether-be/neo4j:7687"
