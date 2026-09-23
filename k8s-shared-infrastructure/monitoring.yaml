@@ -30,7 +30,10 @@ spec:
       serviceAccountName: prometheus-shared-sa
       containers:
       - name: prometheus
-        image: prom/prometheus:latest
+        # Pinned 2026-09-23 to the version that was already running. OPS-14:
+        # a floating tag means a restart can change the binary with no commit
+        # and no review -- which is exactly how otel-collector below broke.
+        image: prom/prometheus:v3.14.0
         ports:
         - containerPort: 9090
           name: prometheus
@@ -1021,7 +1024,11 @@ spec:
     spec:
       containers:
       - name: otel-collector
-        image: otel/opentelemetry-collector-contrib:latest
+        # Pinned 2026-09-23 to the version already running. THIS TAG CAUSED AN
+        # OUTAGE: `:latest` with the default imagePullPolicy of Always meant the
+        # 2026-09-01 restart silently pulled v0.159.0, whose default telemetry
+        # bind address is localhost -- see the service.telemetry block below.
+        image: otel/opentelemetry-collector-contrib:0.159.0
         ports:
         - containerPort: 4317
           name: otlp-grpc
@@ -1162,6 +1169,31 @@ data:
       #     insecure: true
 
     service:
+      # WHY THIS BLOCK EXISTS (added 2026-09-23)
+      # Prometheus scrapes otel-collector-shared:8888 and got `connection
+      # refused` for 22 days, from 2026-09-01 to 2026-09-23. The collector was
+      # healthy the whole time -- ready, health_check serving on 13133 -- so
+      # nothing alerted and nothing looked wrong.
+      #
+      # The cause was the image tag. `:latest` plus the default
+      # imagePullPolicy: Always meant a restart on 2026-09-01 pulled v0.159.0.
+      # Since v0.104 the UseLocalHostAsDefaultHost gate is stable, so an
+      # UNCONFIGURED service.telemetry.metrics defaults to localhost:8888
+      # instead of 0.0.0.0:8888 -- reachable inside the pod, refused from every
+      # other pod. This config never declared the address, so it inherited the
+      # change silently.
+      #
+      # Declare it explicitly. Do not remove this on the assumption the default
+      # is sane; the default is deliberately localhost for security, and a
+      # cross-pod scrape has to opt out of it.
+      telemetry:
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
       extensions: [health_check]
       pipelines:
         traces:
@@ -1212,7 +1244,10 @@ spec:
     spec:
       containers:
       - name: grafana
-        image: grafana/grafana:latest
+        # Pinned 2026-09-23 to the version already running (OPS-14). Not in the
+        # right-sizing plan's finding, which named only Prometheus -- this file
+        # held three floating tags, not one.
+        image: grafana/grafana:13.2.2
         ports:
         - containerPort: 3000
           name: grafana
