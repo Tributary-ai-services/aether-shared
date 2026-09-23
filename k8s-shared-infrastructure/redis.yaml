@@ -33,16 +33,49 @@ spec:
         # requirepass, from the Secret, never a literal here (SEC-24).
         # `sh -c` because redis-server does not expand $VARS in its own args;
         # `exec` so redis stays PID 1 and receives SIGTERM directly.
+        #
+        # --maxmemory / --maxmemory-policy close OPS-2. Before this, the server
+        # ran `maxmemory 0` with the default `noeviction`: no cap at all, and
+        # once it reached the 1Gi container limit every WRITE would fail rather
+        # than anything being evicted. This instance is shared by deeplake-api,
+        # prod-tas-mcp and both routers, so that failure lands on all of them at
+        # once — it is the one thing a shared cache must not do.
+        #
+        # WHY volatile-lru AND NOT allkeys-lru. This instance holds two very
+        # different things:
+        #
+        #   federation:servers:*   12 keys, ttl -1, the MCP federation registry.
+        #                          prod-tas-mcp reads it; losing it de-registers
+        #                          every federated server. It MUST NOT be evicted.
+        #   AIQG C1 response cache TTL 10m, grows with traffic, and is a cache —
+        #                          evicting the oldest entry is exactly right.
+        #
+        # volatile-lru evicts only keys that carry a TTL, which is precisely the
+        # second set and never the first. allkeys-lru would eventually evict the
+        # registry, which looks like a cache working and is actually an outage.
+        # Verified 2026-09-23: all 12 live keys are federation:* at ttl -1.
+        #
+        # 256mb is a cache budget, not a fit to current usage: used_memory_peak
+        # was 1.71M over 4 days' uptime, essentially all registry. An AOF rewrite
+        # forks and can roughly double RSS via copy-on-write, so the worst case
+        # is ~512Mi against the 1Gi limit below — the same derivation the
+        # semcache manifest spells out. Re-derive both if maxmemory changes.
         command:
         - sh
         - -c
-        - exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"
+        - exec redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy volatile-lru --requirepass "$REDIS_PASSWORD"
         env:
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
               name: redis-shared-auth
               key: password
+        # Now DERIVED rather than arbitrary: requests == maxmemory (256mb), and
+        # the limit leaves room for the copy-on-write fork described above.
+        # MEMORY-RIGHTSIZING-PLAN.md tier A lists this instance as 44x
+        # over-declared on a 6Mi measurement — that reading compared an idle
+        # registry against a cache budget. There is nothing to reclaim here;
+        # the number was right, it just had no stated reason until now.
         resources:
           requests:
             memory: "256Mi"
