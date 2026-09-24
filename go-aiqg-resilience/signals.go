@@ -112,7 +112,27 @@ const (
 // Signals is a rule's quality gating.
 type Signals struct {
 	// MinEfficacy excludes candidates scoring below this (0-100).
+	//
+	// This is the STRUCTURAL floor: efficacy is scored from the vendor's
+	// finish_reason, so it sees truncation and filtering, not incorrectness. A
+	// fluent wrong answer that completes cleanly scores 100 against it. Pair it
+	// with MinJudgedEfficacy when you need a floor on whether the answer was
+	// right, not merely whether it finished.
 	MinEfficacy int `json:"min_efficacy,omitempty"`
+	// MinJudgedEfficacy excludes candidates whose JUDGED efficacy falls below
+	// this (0-100) — the LLM-as-judge rubric score, rescaled from its native
+	// 0-1.
+	//
+	// Kept separate from MinEfficacy rather than blended into it, because the
+	// two are measured over very different coverage. Judged coverage is the
+	// judge sample rate net of abstains (~16-22% in practice); structural
+	// coverage is 81-100%. Blending them forces a choice between a weighting
+	// that is defensible and one that works: weight by coverage and a judged
+	// 53 is pulled to 91 by the structural 100 beside it, so the gate cannot
+	// see the failure it exists to catch; weight them equally and three judged
+	// samples are asserted to carry the weight of thirteen structural ones.
+	// Two floors, each applied at its own coverage, avoids the choice.
+	MinJudgedEfficacy int `json:"min_judged_efficacy,omitempty"`
 	// MaxAssuranceSeverity excludes candidates whose worst observed finding is
 	// more severe than this.
 	MaxAssuranceSeverity Severity `json:"max_assurance_severity,omitempty"`
@@ -139,7 +159,7 @@ const (
 
 // IsZero reports whether no gating is configured.
 func (s Signals) IsZero() bool {
-	return s.MinEfficacy == 0 && s.MaxAssuranceSeverity == "" &&
+	return s.MinEfficacy == 0 && s.MinJudgedEfficacy == 0 && s.MaxAssuranceSeverity == "" &&
 		s.MinSamples == 0 && s.MaxStalenessHours == 0 &&
 		s.ExcludeSynthetic == nil && s.OnInsufficientData == ""
 }
@@ -174,6 +194,9 @@ func (s Signals) Validate() error {
 	if s.MinEfficacy < 0 || s.MinEfficacy > 100 {
 		errs = append(errs, "min_efficacy must be between 0 and 100")
 	}
+	if s.MinJudgedEfficacy < 0 || s.MinJudgedEfficacy > 100 {
+		errs = append(errs, "min_judged_efficacy must be between 0 and 100")
+	}
 	if s.MaxAssuranceSeverity != "" {
 		if _, ok := severityRank[Severity(strings.ToLower(string(s.MaxAssuranceSeverity)))]; !ok {
 			errs = append(errs, fmt.Sprintf("max_assurance_severity %q is not one of %s",
@@ -192,9 +215,9 @@ func (s Signals) Validate() error {
 	}
 	// A gate with no threshold gates nothing. Refusing it beats storing a rule
 	// whose author believes quality is being enforced.
-	if s.MinEfficacy == 0 && s.MaxAssuranceSeverity == "" &&
+	if s.MinEfficacy == 0 && s.MinJudgedEfficacy == 0 && s.MaxAssuranceSeverity == "" &&
 		(s.MinSamples > 0 || s.MaxStalenessHours > 0 || s.OnInsufficientData != "") {
-		errs = append(errs, "no quality floor is set (min_efficacy or max_assurance_severity), so nothing is gated and the other settings have no effect")
+		errs = append(errs, "no quality floor is set (min_efficacy, min_judged_efficacy or max_assurance_severity), so nothing is gated and the other settings have no effect")
 	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
@@ -215,6 +238,20 @@ type QualitySignal struct {
 	// at all. A mean over 70% coverage is a different claim from one over
 	// 100%, and a gate reading only the mean would not know the difference.
 	EfficacyCoverage float64 `json:"efficacy_coverage"`
+	// EfficacyJudged is the mean LLM-as-judge score (0-100, rescaled from the
+	// judge's native 0-1). Zero with JudgedSamples==0 means "never judged",
+	// which is not the same as "judged and scored zero" — JudgedSamples is
+	// what distinguishes them, and what the judged floor gates on.
+	EfficacyJudged float64 `json:"efficacy_judged,omitempty"`
+	// EfficacyJudgedCoverage is JudgedSamples over Samples: the share of this
+	// cell's traffic that carries a judged score. Typically well under 1,
+	// because judging is sampled and the judge may abstain.
+	EfficacyJudgedCoverage float64 `json:"efficacy_judged_coverage,omitempty"`
+	// JudgedSamples is the evidence behind EfficacyJudged, counted separately
+	// from Samples. A cell can hold a thousand structural samples and no
+	// judged ones; gating the judged floor on Samples would read that as
+	// strong evidence for a measurement that was never taken.
+	JudgedSamples int `json:"judged_samples,omitempty"`
 	// WorstAssurance is the worst severity observed.
 	WorstAssurance Severity `json:"worst_assurance,omitempty"`
 	// Samples is the evidence behind the aggregate.
@@ -257,13 +294,37 @@ func (s Signals) Gate(sig QualitySignal, found bool) GateResult {
 		return GateResult{Eligible: false, Dimension: "efficacy",
 			Reason: fmt.Sprintf("efficacy %.0f is below the floor of %d", sig.Efficacy, s.MinEfficacy)}
 	}
+	// The judged floor carries its own evidence test, against JudgedSamples
+	// rather than Samples. The two diverge hard: judging is sampled and the
+	// judge may abstain, so a cell routinely holds hundreds of structural
+	// samples and a handful of judged ones. Reusing the row's Samples here
+	// would let a well-measured cell gate on a judged mean drawn from three
+	// responses.
+	judgedAbstained := ""
+	if s.MinJudgedEfficacy > 0 {
+		if sig.JudgedSamples < s.MinSamplesOrDefault() {
+			if s.OnInsufficientData == InsufficientExclude {
+				return GateResult{Eligible: false, Dimension: "judged_samples",
+					Reason: fmt.Sprintf("judged quality evidence is insufficient (%d judged samples against a floor of %d) and this rule excludes unmeasured candidates",
+						sig.JudgedSamples, s.MinSamplesOrDefault())}
+			}
+			// Eligible, but say so. A candidate that passed because nobody
+			// could judge it must not be indistinguishable from one that
+			// passed on its merits.
+			judgedAbstained = fmt.Sprintf("judged efficacy gate abstained: %d judged samples against a floor of %d",
+				sig.JudgedSamples, s.MinSamplesOrDefault())
+		} else if sig.EfficacyJudged < float64(s.MinJudgedEfficacy) {
+			return GateResult{Eligible: false, Dimension: "judged_efficacy",
+				Reason: fmt.Sprintf("judged efficacy %.0f is below the floor of %d", sig.EfficacyJudged, s.MinJudgedEfficacy)}
+		}
+	}
 	if s.MaxAssuranceSeverity != "" && sig.WorstAssurance != "" &&
 		!sig.WorstAssurance.AtMost(s.MaxAssuranceSeverity) {
 		return GateResult{Eligible: false, Dimension: "assurance",
 			Reason: fmt.Sprintf("worst observed finding %q exceeds the limit of %q",
 				sig.WorstAssurance, s.MaxAssuranceSeverity)}
 	}
-	return GateResult{Eligible: true}
+	return GateResult{Eligible: true, Reason: judgedAbstained}
 }
 
 func samplesDesc(sig QualitySignal, found bool, floor int) string {

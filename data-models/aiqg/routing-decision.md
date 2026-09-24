@@ -364,7 +364,8 @@ the experiment runner's existing job.
 ### 5.8 `signals` — CLEAR as a routing input
 
 ```jsonc
-"signals": { "min_efficacy": 70, "max_assurance_severity": "medium",
+"signals": { "min_efficacy": 70, "min_judged_efficacy": 85,
+             "max_assurance_severity": "medium",
              "min_samples": 200, "max_staleness": "24h",
              "exclude_synthetic": true, "on_insufficient_data": "ignore" }
 ```
@@ -386,6 +387,44 @@ Four rules make this safe:
 — the code's reasoning is that "one unauthorized disclosure invalidates otherwise
 perfect performance" — so it is already gate-shaped, and it complements
 `constraints` exactly.
+
+#### Two efficacy floors, not one blended number
+
+`min_efficacy` is **structural**: efficacy is scored from the vendor's
+`finish_reason`, so it sees truncation and filtering but not incorrectness. A
+fluent wrong answer that completes cleanly scores 100 against it. Measured
+2026-09-24, `claude-haiku-4-5 / classification_extraction` scored **structural
+100.0 against a judged 53.3** — so a structural-only gate cannot exclude the one
+failure mode a buyer is actually protecting against.
+
+`min_judged_efficacy` gates the LLM-as-judge score (`aiqg.model_quality.
+efficacy_judged`, 0-100, rescaled from the judge's native 0-1). It is stored and
+gated **beside** the structural score rather than blended into it, because the
+two carry very different coverage — judged runs 16-22%, the judge sample rate
+net of abstains, against 81-100% structural. Blending forces a choice between a
+weighting that is defensible and one that works:
+
+| weighting | that 100 / 53.3 cell becomes | consequence |
+|---|---|---|
+| coverage-weighted | **91.3** | the judged 53.3 is laundered; the gate cannot see it |
+| equal-weight | 76.7 | asserts 3 judged samples weigh as much as 13 structural |
+
+Two floors, each read at its own coverage, avoids the choice entirely.
+
+**The judged floor tests its own evidence.** `judged_samples` is counted
+separately from `samples`, and `min_samples` applies to each independently. The
+two diverge hard — a cell routinely holds 1,145 structural samples and zero
+judged ones — so a judged floor reading `samples` would gate on a measurement
+nobody took. With no judged evidence the gate abstains and records that it did,
+so a candidate that passed because nobody could judge it stays distinguishable
+from one that passed on its merits.
+
+**Self-graded scores are excluded** from `efficacy_judged`. The gate decides
+which candidates are eligible to be routed, so a model grading its own output
+would be voting on its own eligibility. The rows are still stored and still
+surface on dashboards; they are dropped only from the aggregate the router
+reads. Rows that name no grader at all are treated as self-graded — unknown must
+not read as independent.
 
 ### 5.9 Cache keys — three caches, three keys
 

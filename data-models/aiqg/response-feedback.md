@@ -79,7 +79,28 @@ Indexes: `(tenant_id, created_at DESC)`; partial on `(tenant_id, response_event_
 | `occurred_at` | timestamptz | no | When the outcome happened; defaults to ingest time |
 | `experiment_id` / `variant` | string | no | Copied from the resolved event line when promoted (experiments runner, Phase 2) |
 | `resolved` | bool | — | Whether the referenced event was found in Loki at ingest |
-| `metadata` | JSONB ≤8KiB | no | Caller payload; may carry PII — keep minimal |
+| `metadata` | JSONB ≤8KiB | no | Caller payload; may carry PII — keep minimal. On gateway-written `judge` rows it carries a reserved provenance block (§3.1) |
+
+### 3.1 Reserved `metadata` keys on gateway-written `judge` rows
+
+Rows written by the gateway through `POST /internal/judge` carry provenance that
+customer-supplied feedback does not. These keys are reserved; a caller on the
+public `/feedback` path must not use them for anything else.
+
+| key | type | why it exists |
+|---|---|---|
+| `workflow` | string | the CLEAR workflow the response was classified as |
+| `dimensions` | object | per-dimension rubric scores (0–1) |
+| `rubric_version` | string | versions the **rubric**, not the grader |
+| `model` / `vendor` | string | **the join key.** These rows live in the config database; the `(model, workflow)` a response belongs to lives in `aiqg.event_metrics` on TimescaleDB. There is no cross-database join, so the model cannot be recovered from the event after the fact — it has to be stamped here at write time |
+| `judge_model` | string | **which model graded it.** `rubric_version` is not a substitute: two different graders both score under `v1`, producing rows that look comparable and are not. Without this, a change of grader is unmeasurable — you cannot compare across it, re-score an old window, or show a replacement judge beat the one it replaced |
+| `self_judged` | bool | the graded model *is* the grading model |
+
+**`self_judged` absent and `self_judged: false` are different facts.** False means
+an independently graded response. Absent means a row written before the gateway
+sent the flag, whose bias status is unknown. Consumers that feed routing must
+treat absent as self-judged — reading unknown as independent would let a model's
+own grades count toward its own eligibility. See [[routing-decision]] §5.8.
 
 ---
 

@@ -172,3 +172,93 @@ func TestDefaultsAreConservative(t *testing.T) {
 		t.Fatalf("staleness default = %d", s.StalenessOrDefault())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The judged floor. Structural efficacy is finish-reason-only, so a fluent
+// wrong answer scores 100 against it; the judged floor is what can see that.
+// It is a SEPARATE floor over SEPARATE evidence, and the tests below pin both
+// halves of that separation.
+// ---------------------------------------------------------------------------
+
+func judged(eff, judgedEff float64, samples, judgedSamples int) QualitySignal {
+	q := sig(eff, SeverityNone, samples)
+	q.EfficacyJudged = judgedEff
+	q.JudgedSamples = judgedSamples
+	if samples > 0 {
+		q.EfficacyJudgedCoverage = float64(judgedSamples) / float64(samples)
+	}
+	return q
+}
+
+// The case the whole tier exists for: structural says 100, the judge says 53.
+// Measured in production on claude-haiku-4-5 / classification_extraction.
+func TestJudgedFloorExcludesWhatStructuralCannotSee(t *testing.T) {
+	s := Signals{MinEfficacy: 70, MinJudgedEfficacy: 85, MinSamples: 10}
+	r := s.Gate(judged(100, 53, 100, 100), true)
+	if r.Eligible {
+		t.Fatal("a fluent-but-wrong candidate cleared both floors; the judged floor is not gating")
+	}
+	if r.Dimension != "judged_efficacy" {
+		t.Fatalf("dimension = %q, want judged_efficacy", r.Dimension)
+	}
+	if !strings.Contains(r.Reason, "judged efficacy") {
+		t.Fatalf("reason %q should name the judged dimension, not the structural one", r.Reason)
+	}
+}
+
+// The floors are independent: clearing one says nothing about the other.
+func TestJudgedFloorIsIndependentOfStructural(t *testing.T) {
+	s := Signals{MinEfficacy: 90, MinJudgedEfficacy: 50, MinSamples: 10}
+	// Truncating a lot (structural 60) but answering correctly when it does.
+	r := s.Gate(judged(60, 95, 100, 100), true)
+	if r.Eligible {
+		t.Fatal("a candidate below the structural floor was admitted because its judged score was high")
+	}
+	if r.Dimension != "efficacy" {
+		t.Fatalf("dimension = %q, want efficacy", r.Dimension)
+	}
+}
+
+// A cell can hold a thousand structural samples and no judged ones. Gating the
+// judged floor on Samples would read that as strong evidence for a measurement
+// nobody took.
+func TestJudgedFloorAbstainsOnItsOwnSampleCount(t *testing.T) {
+	s := Signals{MinJudgedEfficacy: 85, MinSamples: 200}
+	r := s.Gate(judged(100, 0, 1145, 0), true)
+	if !r.Eligible {
+		t.Fatal("a candidate with no judged samples was excluded; zero judged evidence is not a zero score")
+	}
+	// Passing because nobody could judge it must not look like passing on merit.
+	if !strings.Contains(r.Reason, "abstained") {
+		t.Fatalf("reason %q should record the judged abstention", r.Reason)
+	}
+}
+
+// Same thin-judged-evidence case, but for the tenant who would rather fail than
+// route on unmeasured quality.
+func TestJudgedThinEvidenceCanExcludeWhenOptedIn(t *testing.T) {
+	s := Signals{MinJudgedEfficacy: 85, MinSamples: 200, OnInsufficientData: InsufficientExclude}
+	r := s.Gate(judged(100, 0, 1145, 3), true)
+	if r.Eligible {
+		t.Fatal("on_insufficient_data=exclude admitted a candidate with 3 judged samples")
+	}
+	if r.Dimension != "judged_samples" {
+		t.Fatalf("dimension = %q, want judged_samples", r.Dimension)
+	}
+}
+
+// A judged floor alone is a real gate — it must not trip the "nothing is
+// gated" refusal that exists to catch a rule whose author thinks it enforces
+// something.
+func TestJudgedFloorAloneIsAValidRule(t *testing.T) {
+	s := Signals{MinJudgedEfficacy: 85, MinSamples: 200}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("a judged-only rule was rejected: %v", err)
+	}
+	if s.IsZero() {
+		t.Fatal("a rule with a judged floor reported itself as no gating configured")
+	}
+	if err := (Signals{MinJudgedEfficacy: 101}).Validate(); err == nil {
+		t.Fatal("min_judged_efficacy above 100 was accepted")
+	}
+}
