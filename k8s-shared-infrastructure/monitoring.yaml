@@ -607,8 +607,17 @@ data:
           # tas-mcp-servers#26 stopped kustomize writing labels into dbhub's
           # immutable Deployment selector. See the note on TASDriftRising —
           # that one tree is why the drift bar moves the other way.
+          # 3 -> 2 on 2026-09-24: OPS-29 deleted the orphan, unversioned
+          # k8s-shared-infrastructure/ copy at the TAS root. It had a
+          # kustomization.yaml, so drift-check discovered and counted it, and
+          # it always exited 2 — its stale commonLabels rendered a
+          # {app,project,tier} selector against grafana-shared's live {app},
+          # which the API rejects as immutable. The tree is gone rather than
+          # fixed: it was a fork nothing applied, and repairing it would have
+          # meant maintaining a second copy of the shared manifests. Files
+          # preserved in tas-claude archive/2026-09-21-orphan-k8s-shared-infrastructure/.
           - alert: TASDriftUncheckableRising
-            expr: tas_drift_trees_uncheckable > 3
+            expr: tas_drift_trees_uncheckable > 2
             for: 2h
             labels:
               severity: warning
@@ -617,8 +626,8 @@ data:
             annotations:
               summary: "More kustomize trees cannot be checked than before"
               description: >
-                {{ $value }} trees now fail to evaluate, above the 3 known on
-                2026-09-23. A newly uncheckable tree is worse than a drifted
+                {{ $value }} trees now fail to evaluate, above the 2 known on
+                2026-09-24. A newly uncheckable tree is worse than a drifted
                 one: it reports nothing rather than something wrong.
 
           # 7 -> 8 on 2026-09-23. Raising a ratchet is normally the wrong
@@ -633,8 +642,14 @@ data:
           # one eighth of it was invisible. The 39 objects behind it are
           # nearly all pre-existing (OPS-14 image drift and friends); working
           # them down is what should take this back to 7 and below.
+          # 8 -> 7 on 2026-09-24, and this one IS a repair rather than a
+          # population change: tas-llm-router/k8s now diffs clean (exit 0,
+          # confirmed twice), the reconciliation that tas-llm-router#217 and
+          # #218 were merged for. It is the first tree in this count to reach
+          # clean, so the "back to 7 and below" above is now done — the next
+          # target is 6.
           - alert: TASDriftRising
-            expr: tas_drift_trees_drifted > 8
+            expr: tas_drift_trees_drifted > 7
             for: 2h
             labels:
               severity: warning
@@ -643,8 +658,8 @@ data:
             annotations:
               summary: "More kustomize trees drifted from the cluster than before"
               description: >
-                {{ $value }} trees differ from what is running, above the 8
-                known on 2026-09-23 (the earlier 17 counted child
+                {{ $value }} trees differ from what is running, above the 7
+                known on 2026-09-24 (the earlier 17 counted child
                 kustomizations that are never applied on their own). Run
                 aether-shared/scripts/drift-check.sh to see which.
 
