@@ -648,8 +648,20 @@ data:
           # #218 were merged for. It is the first tree in this count to reach
           # clean, so the "back to 7 and below" above is now done — the next
           # target is 6.
+          # 7 -> 5 on 2026-09-24, two repairs in one pass: aiqg-ui/k8s and
+          # aiqg-dashboard-be/k8s both diff clean after applying the
+          # app.kubernetes.io/part-of label their manifests already declared.
+          # Measured before tightening — clean=3 drift=5 uncheckable=2 — so
+          # the threshold sits exactly at the current value and does not fire.
+          # Of the 5 that remain, 2 are deliberate (aether/k8s targets a
+          # namespace that does not exist; tas-agent-builder would worsen
+          # OPS-14) and postgres-mcp is a loaded gun, not a pending apply:
+          # its rendered Secret is EMPTY while live holds DATABASE_URL, and
+          # the Deployment reads it with envFrom, so applying deletes the
+          # key and rolls the pod straight into the breakage. Next target 4,
+          # and it should come from aether-be/k8s or tas-mcp-servers/k8s.
           - alert: TASDriftRising
-            expr: tas_drift_trees_drifted > 7
+            expr: tas_drift_trees_drifted > 5
             for: 2h
             labels:
               severity: warning
@@ -658,7 +670,7 @@ data:
             annotations:
               summary: "More kustomize trees drifted from the cluster than before"
               description: >
-                {{ $value }} trees differ from what is running, above the 7
+                {{ $value }} trees differ from what is running, above the 5
                 known on 2026-09-24 (the earlier 17 counted child
                 kustomizations that are never applied on their own). Run
                 aether-shared/scripts/drift-check.sh to see which.

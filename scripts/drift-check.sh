@@ -67,9 +67,19 @@ is_expected_skip() {
 # inflated number is not a harmless one; it is what makes people stop reading
 # the report.
 mapfile -t ALL < <(
+  # `*/archive/*` is excluded for the same reason as `*/mirror/*`: a preserved
+  # copy is not a deployable tree. OPS-29 archived the orphan shared-infra tree
+  # byte-identically into tas-claude/archive/, and because the copy keeps its
+  # kustomization.yaml this walk rediscovered it as a ROOT tree and it failed
+  # exactly as it had before — on grafana-shared's immutable selector. So the
+  # uncheckable count went back to 3 against a ratchet pinned at 2, and
+  # TASDriftUncheckableRising was two hours from firing over a directory whose
+  # whole purpose is to never be applied. Deleting the tree did not remove it
+  # from this walk; only excluding archives does.
   find "$ROOT" -maxdepth 5 -name kustomization.yaml \
     -not -path '*/node_modules/*' -not -path '*/.claude/*' \
-    -not -path '*/mirror/*' -not -path '*/.docwt-*' 2>/dev/null |
+    -not -path '*/mirror/*' -not -path '*/.docwt-*' \
+    -not -path '*/archive/*' 2>/dev/null |
   xargs -r -n1 dirname | sort -u
 )
 mapfile -t CHILDREN < <(
