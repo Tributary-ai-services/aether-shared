@@ -205,6 +205,12 @@ Comprehensive reference for Argo Events patterns used in TAS workflow triggers. 
 
 Comprehensive reference for Argo Workflows design patterns. Covers all 8 template types (Container, Script, Resource, HTTP, Suspend, ContainerSet, Steps, DAG), parameters, artifacts, variables, retry strategies, conditionals, loops, exit handlers, CronWorkflows, WorkflowTemplates, and TAS-specific integration patterns (HTTP callback, map-reduce, approval workflows).
 
+#### 14. [Release Tracking](./release-tracking.md) - Build Provenance and Promotion History
+**Status**: design, not built (2026-10-01)
+**Depends on**: the Versioning & Release Policy in the root `CLAUDE.md`
+
+Design for tracking which releases have been built, what is deployed to each environment, and the promotion log across production, the air-ops public edge, and future dev/test/staging. Models the deployment *target* rather than the service — because one service runs different versions in different Deployments — and treats baked configuration as part of artifact identity. Every reconciler check maps to an incident that has already happened: manifest pins left behind production, a build-arg omission that broke all authenticated requests, images in production from commits that were never pushed, and floating `:latest` tags.
+
 ---
 
 ## Cross-Service Integration
