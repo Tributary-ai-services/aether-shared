@@ -32,9 +32,26 @@ data:
       // before it reaches Loki, so a missing entry produces silent
       // "no logs in Grafana" surprises (see aiqg added 2026-06-05;
       // container-registry + dbhub-operator-system added 2026-06-09).
+      //
+      // ingress-nginx added 2026-10-05. Every request to every public host
+      // passes through this controller, so its access log is the only place
+      // that records whether a failing request reached the application at all
+      // — and without it a 400 cannot be attributed. That is not theoretical:
+      // on 2026-10-05 a BYOK key store failed with a bare 400 and the cause
+      // had to be narrowed by eliminating the handler, the auth middleware,
+      // two Ingresses and the Cloudflare edge by reading code, because neither
+      // the app nor the proxy had recorded anything. The status code and
+      // upstream fields in this log would have answered it immediately.
+      //
+      // Volume: this is an access log, so it is chattier than an application
+      // log. External traffic only (kubelet probes hit pods directly, not the
+      // Ingress), so on this cluster it is modest — but if retention pressure
+      // shows up, the fix is a stage.match on namespace="ingress-nginx" with a
+      // stage.drop for 2xx/3xx, NOT removing the namespace again. Keeping only
+      // the failures is what diagnosis actually needs.
       rule {
         source_labels = ["__meta_kubernetes_namespace"]
-        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events|tas-mcp-servers|aiqg|container-registry|dbhub-operator-system)"
+        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events|tas-mcp-servers|aiqg|container-registry|dbhub-operator-system|ingress-nginx)"
         action = "keep"
       }
 
