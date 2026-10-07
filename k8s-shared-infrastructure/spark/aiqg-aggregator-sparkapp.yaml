@@ -11,11 +11,16 @@
 # checkpoint, separate SparkApplication. An AIQG schema bug must not
 # stall the generic activity/compliance pipeline.
 #
-# Image lifecycle: tas-spark-jobs Makefile builds + pushes
-# registry-api.tas.scharber.com/tas-spark-jobs:<sha>; this manifest
-# pins :latest for the AIQG aggregator (matching events-aggregator's
-# precedent of pinning a specific SHA via image: registry/.../X.Y.Z).
-# Bump the tag here when the image rev needs a deterministic rollout.
+# Image lifecycle: tas-spark-jobs `make push` builds + pushes
+# registry-api.tas.scharber.com/tas-spark-jobs:<VERSION> (semver, from the
+# repo's VERSION file) and prints the digest. This manifest pins tag AND
+# digest: the tag says what it is, the digest proves it, and a re-pushed tag
+# cannot silently change what runs. Never a floating tag (CLAUDE.md,
+# Versioning & Release Policy).
+#
+# 0.2.0 (AIQG-47): writes the cache-aware cost columns (migration 003) and
+# ships AIQG-3's decomposition writer, which the previous ffa6290 image
+# predates -- those 8 columns existed but were never populated.
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -64,7 +69,7 @@ spec:
   mode: cluster
   pythonVersion: "3"
   sparkVersion: 3.5.0
-  image: registry-api.tas.scharber.com/tas-spark-jobs:ffa6290
+  image: registry-api.tas.scharber.com/tas-spark-jobs:0.2.0@sha256:8da90ffe1f949fdf229765528aa913b437cdaf12d8881e9e8fa6e606fafe3433
   imagePullPolicy: Always
   mainApplicationFile: local:///opt/spark/jobs/aiqg_aggregator/main.py
   deps:
