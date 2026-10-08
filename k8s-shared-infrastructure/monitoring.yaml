@@ -932,6 +932,94 @@ data:
   # scrapes; auth_attempts_total reads 1.43e9; real 401s absent from
   # errors_total). Any rate() over those metrics is 0 forever, so an alert built
   # on them would never fire while looking like coverage.
+  llm-router-provider-health-alerts.yml: |
+    groups:
+      - name: llm_router_provider_health
+        interval: 30s
+        rules:
+          # OPS-55. On 2026-10-05 every Claude model on BOTH routers went down
+          # because our own prepaid Anthropic account ran out of credit -- the
+          # production judge included -- and NOTHING alerted. The pods were
+          # healthy, so up{} was 1 and the availability rules stayed quiet;
+          # llm_router_provider_health has existed all along and, measured
+          # 2026-10-08, had ZERO alert rules watching it across all six rule
+          # files. The first symptom was a judge experiment failing.
+          #
+          # A provider is shared by both deployments through one key, so one
+          # provider unhealthy is a fleet-wide loss of every model it serves,
+          # not a degraded replica.
+          - alert: LLMRouterProviderUnhealthy
+            expr: llm_router_provider_health == 0
+            for: 3m
+            labels:
+              severity: critical
+              service: tas-llm-router
+              component: provider-health
+            annotations:
+              summary: "Provider {{ $labels.provider }} is unhealthy on {{ $labels.service }}"
+              description: >
+                The 30s background health check for {{ $labels.provider }} has
+                failed for 3m, so every model it serves is refused with a 503 and
+                will not self-heal until the cause is fixed. Check
+                llm_router_provider_unhealthy_reason for the classified cause
+                before assuming the vendor is down -- it often is not.
+
+          # The reason this item exists. An exhausted balance or a spend limit
+          # is OURS to fix and nobody else's, and it is invisible in the
+          # unhealthy alert above, which reads as the vendor being down.
+          - alert: LLMRouterUpstreamCreditExhausted
+            expr: llm_router_provider_unhealthy_reason{reason="credit_exhausted"} == 1
+            for: 1m
+            labels:
+              severity: critical
+              service: tas-llm-router
+              component: billing
+            annotations:
+              summary: "{{ $labels.provider }} is refusing the gateway: no credit or spend limit reached"
+              description: >
+                {{ $labels.provider }} rejected the gateway's health check for a
+                BILLING reason -- an exhausted prepaid balance or an
+                organization spend limit. This is not a vendor outage and will
+                not recover on its own: top up or raise the cap in the provider
+                console. One key funds both llm-router and llm-router-aiqg, so
+                every model this provider serves is down, including the AIQG
+                judge and Plan #18's dogfooding path.
+
+          # A rotated or revoked key looks identical to an outage from outside,
+          # and SEC-30 rotated this very key on 2026-10-06 with a 1-day expiry
+          # on the old one -- so this is a live shape, not a hypothetical.
+          - alert: LLMRouterUpstreamCredentialsRejected
+            expr: llm_router_provider_unhealthy_reason{reason="auth"} == 1
+            for: 1m
+            labels:
+              severity: critical
+              service: tas-llm-router
+              component: auth
+            annotations:
+              summary: "{{ $labels.provider }} rejected the gateway's credentials"
+              description: >
+                {{ $labels.provider }} returned an authentication failure to the
+                health check. The key in llm-router-secret is wrong, revoked or
+                expired. Env vars are read once at pod start, so a Secret edit
+                changes nothing until every consumer restarts.
+
+          # The silence guard. Every other alert here goes quiet if the series
+          # stops arriving, and "no data" renders as blank rather than alarming
+          # -- the failure shape OPS-19, OPS-24 and OPS-21 each hit.
+          - alert: LLMRouterProviderHealthMetricMissing
+            expr: absent(llm_router_provider_health)
+            for: 30m
+            labels:
+              severity: warning
+              service: tas-llm-router
+              component: provider-health
+            annotations:
+              summary: "llm_router_provider_health has stopped arriving"
+              description: >
+                No provider-health series has been scraped for 30m, so the alerts
+                above cannot fire whatever the providers are doing. Either the
+                gateway is not being scraped or the metric was renamed.
+
   llm-router-availability-alerts.yml: |
     groups:
       - name: llm_router_availability
