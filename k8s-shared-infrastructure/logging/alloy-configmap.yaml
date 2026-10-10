@@ -51,7 +51,7 @@ data:
       // the failures is what diagnosis actually needs.
       rule {
         source_labels = ["__meta_kubernetes_namespace"]
-        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events|tas-mcp-servers|aiqg|container-registry|dbhub-operator-system|ingress-nginx)"
+        regex = "(tas-shared|aether-be|tas-agent-builder|tas-llm-router|tas-mcp|tas-mcp-prod|argo|argo-events|tas-mcp-servers|aiqg|container-registry|dbhub-operator-system|ingress-nginx|cloudflare)"
         action = "keep"
       }
 
