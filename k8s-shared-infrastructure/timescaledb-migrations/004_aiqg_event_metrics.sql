@@ -165,7 +165,15 @@ SELECT
     sum(nist_valid_reliable)                                                 AS nist_valid_reliable,
     sum(nist_safe)                                                           AS nist_safe
 FROM aiqg.event_metrics_1m
-GROUP BY bucket, tenant_id, workflow, vendor
+-- The time_bucket expression, not the alias: the input (event_metrics_1m) has
+-- its own `bucket` column, so a bare `GROUP BY bucket` groups by the 1-minute
+-- column instead of the hourly one and TimescaleDB rejects the view ("must
+-- include a valid time bucket function"). Because the migrate Job runs psql
+-- without ON_ERROR_STOP, that error was silent: on a fresh database this file
+-- created no 1h rollup and then failed its policy call too. Production was
+-- unaffected only because its rollup was created out of band (verified
+-- 2026-10-11 against 2.13.0-pg15, the deployed version).
+GROUP BY time_bucket('1 hour', bucket), tenant_id, workflow, vendor
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('aiqg.event_metrics_1h',
