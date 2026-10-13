@@ -31,9 +31,12 @@ VALUES
   (now() - interval '3 hours', :tb, 'b-2', 'openai',    'gpt-y',    'qa', 'gateway_error',  0.00,   0, 100, 'ub', 'pb', '10.0.0.2', '{"secret":"b"}');
 
 -- Materialise every rollup so the views over them have rows to filter.
-CALL refresh_continuous_aggregate('aiqg.event_metrics_1m',       NULL, now());
-CALL refresh_continuous_aggregate('aiqg.event_metrics_1h',       NULL, now());
-CALL refresh_continuous_aggregate('aiqg.event_metrics_model_1h', NULL, now());
+-- The window is ONE DAY, never NULL: once 006's retention policy has dropped
+-- old raw chunks, refreshing a range that reaches past it recomputes those
+-- buckets from nothing and erases the rollup history it was keeping.
+CALL refresh_continuous_aggregate('aiqg.event_metrics_1m',       now() - interval '1 day', now());
+CALL refresh_continuous_aggregate('aiqg.event_metrics_1h',       now() - interval '1 day', now());
+CALL refresh_continuous_aggregate('aiqg.event_metrics_model_1h', now() - interval '1 day', now());
 
 -- The tests run as the reader. It is NOLOGIN in production until a password is
 -- set; SET ROLE needs only membership, which a superuser has.
@@ -170,8 +173,8 @@ END $$;
 -- Clean up the synthetic tenants.
 DELETE FROM aiqg.event_metrics
  WHERE tenant_id IN ('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222');
-CALL refresh_continuous_aggregate('aiqg.event_metrics_1m',       NULL, now());
-CALL refresh_continuous_aggregate('aiqg.event_metrics_1h',       NULL, now());
-CALL refresh_continuous_aggregate('aiqg.event_metrics_model_1h', NULL, now());
+CALL refresh_continuous_aggregate('aiqg.event_metrics_1m',       now() - interval '1 day', now());
+CALL refresh_continuous_aggregate('aiqg.event_metrics_1h',       now() - interval '1 day', now());
+CALL refresh_continuous_aggregate('aiqg.event_metrics_model_1h', now() - interval '1 day', now());
 
 \echo 'ALL CHECKS PASSED'
