@@ -1,0 +1,26 @@
+-- Retention for raw per-request events (Plan #20 Phase 0; decided 2026-10-13).
+--
+-- aiqg.event_metrics had no retention policy at all: every request since
+-- 2026-05-27 was kept forever. Raw events are now kept for 90 days, which is
+-- also the longest window any reader asks for (feedback and experiments cap
+-- at 90 days; the customer data MCP server caps raw-event queries at 90 too).
+--
+-- The rollups are NOT given a retention policy and keep their full history:
+-- event_metrics_1m, event_metrics_1h and event_metrics_model_1h. Long-range
+-- charts read those, so a 90-day raw window does not shorten them.
+--
+-- !! TRAP (demonstrated 2026-10-13 on timescaledb 2.13.0-pg15): a continuous
+-- aggregate built on event_metrics, refreshed over a range whose raw chunks
+-- have been dropped, is recomputed from NOTHING and its history there is
+-- erased. 50 rows dropped by this policy left event_metrics_1m, _1h and
+-- _model_1h intact; a refresh_continuous_aggregate('aiqg.event_metrics_1m',
+-- NULL, ...) afterwards took the 1m rollup from $20 to $0 for that range.
+-- event_metrics_1m and event_metrics_model_1h read raw directly; _1h reads
+-- _1m, so it is lost the moment _1m is. The scheduled refresh policies reach
+-- back at most 3 days, so they are safe. NEVER refresh with a NULL start or any
+-- window older than 90 days against this database.
+--
+-- Idempotent: if_not_exists makes a re-run (the migrate Job re-runs every
+-- file) a no-op.
+
+SELECT add_retention_policy('aiqg.event_metrics', INTERVAL '90 days', if_not_exists => TRUE);
