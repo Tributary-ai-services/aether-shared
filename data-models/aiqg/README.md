@@ -16,6 +16,7 @@ This directory contains the 16 data-model docs and the master plan for the AIQG 
 | [build-vs-reuse.md](./build-vs-reuse.md) | Master plan: what's reused from existing TAS, what's built new, wire-compat checklist, all §7 decisions stamped |
 | [source-spec-v0.2.md](./source-spec-v0.2.md) | Product spec (Mehta-CLEAR-anchored methodology and product definition, v0.2) |
 | [account.md](./account.md) | AIQG Account (Neo4j) — 1:1 mapping to Space.tenant_id; region, retention, scoring weights, quotas |
+| [token.md](./token.md) | Customer bearer tokens (`tas_qg_live_*`, PostgreSQL `aiqg.token`) — hashing, lifecycle, and the data-access scopes the customer data MCP server requires |
 | [request-event.md](./request-event.md) | Per-request capture envelope (TimescaleDB hypertable + CloudEvent) |
 | [response-event.md](./response-event.md) | Per-response capture envelope paired with request-event |
 | [token-accounting.md](./token-accounting.md) | Input/output/cached/tool tokens, vendor pricing, estimated vs. actual cost, three-category waste decomposition |
