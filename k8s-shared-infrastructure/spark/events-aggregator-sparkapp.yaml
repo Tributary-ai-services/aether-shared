@@ -21,7 +21,14 @@ spec:
     onSubmissionFailureRetries: 3
     onSubmissionFailureRetryInterval: 30
   driver:
+    # cores sets spark's task slots; coreRequest is what the scheduler reserves.
+    # Left unset, the reservation equals cores (1 CPU each, 4 across both apps).
+    # After um773dev moved to 8 threads (2026-10-23) both nodes sat at ~90% CPU
+    # requested vs ~11% used, and the executor stayed Pending -- the app
+    # reported RUNNING while aggregating nothing. 250m reserves a quarter
+    # and still lets the pod burst to a full core.
     cores: 1
+    coreRequest: "250m"
     memory: "1g"
     serviceAccount: spark-events-aggregator
     labels:
@@ -79,6 +86,7 @@ spec:
                   operator: In
                   values: ["compute"]
     cores: 1
+    coreRequest: "250m"
     instances: 1
     memory: "1g"
     labels:
