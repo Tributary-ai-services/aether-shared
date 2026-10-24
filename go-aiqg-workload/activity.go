@@ -20,7 +20,7 @@ import (
 // wrong activity is worse than none, for the same reason a wrong ToolFamily is.
 
 // ActivityExtractorVersion stamps ActivityResult. Bump it when a rule's meaning changes.
-const ActivityExtractorVersion = "ca-1"
+const ActivityExtractorVersion = "ca-2"
 
 // Activity is an SDLC step. The values are the labeling skill's (tas-session-corpus
 // skills/sdlc-turn-labeling, section 1); this extractor emits only the structural subset.
@@ -67,13 +67,14 @@ const (
 	VerbFileWrite   Verb = "file_write"  // a shell write whose target is not a known doc or code path (sed -i, cp, mv, > "$VAR")
 	VerbEditCode    Verb = "edit_code"   // an edit tool on a non-doc path, or a shell write to a code or config path
 	VerbEditDoc     Verb = "edit_doc"    // an edit or shell write to a doc path, or a document/artifact tool
-	VerbBookkeeping Verb = "bookkeeping" // an edit to a path on the tenant's bookkeeping list (backlog, memory)
+	VerbBookkeeping Verb = "bookkeeping" // a write to a path, artifact or script on the tenant's bookkeeping list (backlog, memory, mirror sync)
 	VerbDelegate    Verb = "delegate"    // a subagent
 )
 
-// ActivityInput is one task's calls. Bookkeeping lists path fragments the tenant treats as standing
-// bookkeeping (a backlog file, a memory directory); an edit there is hygiene, not implementation. It is
-// tenant config, so it is passed in, never built in.
+// ActivityInput is one task's calls. Bookkeeping lists fragments of the paths, artifact URLs and scripts
+// the tenant treats as project bookkeeping (a backlog file and its published page, a memory directory, a
+// mirror-sync script); writing there is maintain_hygiene, not document or implement. It is tenant config,
+// so it is passed in, never built in.
 type ActivityInput struct {
 	Calls       []ToolCall
 	Bookkeeping []string
@@ -126,6 +127,9 @@ var (
 	reTee         = regexp.MustCompile(`\btee\s+(?:-a\s+)?([^\s;&|)]+)`)
 	reInPlaceEdit = regexp.MustCompile(`\b(sed|perl)\s+(-\S*\s+)*-i\b|\b(cp|mv|mkdir|touch|rm|ln)\s`)
 	heredocStart  = regexp.MustCompile(`<<-?\s*['"]?(\w+)['"]?`)
+	// A command that names a bookkeeping path and writes or runs something: a script run, an interpreter,
+	// git add/commit. A grep of the backlog names it too, and is not a write.
+	reBookkeepingRun = regexp.MustCompile(`\.(sh|py)\b|\bpython3?\b|\bgit\s+(-C\s+\S+\s+)?(add|commit)\b`)
 )
 
 var codeExt = map[string]bool{
@@ -155,11 +159,18 @@ func countCall(v map[Verb]int, c ToolCall, bookkeeping []string) {
 			}
 		}
 		countShellWrites(v, cmd, bookkeeping)
+		if onList(cmd, bookkeeping) && reBookkeepingRun.MatchString(cmd) {
+			v[VerbBookkeeping]++ // running a sync script, or a script or commit that names a bookkeeping path
+		}
 		return
 	}
 	toks := tokenize(c.Name)
 	if hasToken(toks, "artifact", "docs", "doc", "document") && !hasToken(toks, "read", "list", "guide", "query", "export") {
-		v[VerbEditDoc]++
+		if onList(c.Target, bookkeeping) {
+			v[VerbBookkeeping]++ // publishing the backlog page is bookkeeping, not documentation
+		} else {
+			v[VerbEditDoc]++
+		}
 		return
 	}
 	switch FamilyOf(c.Name) {
@@ -191,10 +202,14 @@ func decideActivity(v map[Verb]int) (Activity, ActConfidence) {
 		return ActivityImplement, ConfMed
 	case v[VerbTest] > 0 || v[VerbLint] > 0 || v[VerbCompile] > 0:
 		return ActivityTestVerify, ConfMed
-	// Backlog and memory edits are labeled document, not hygiene: the bookkeeping list feeds
-	// origin=standing_rule, it does not change the step.
-	case v[VerbEditDoc] > 0 || v[VerbBookkeeping] > 0:
+	// Documentation about the product or code. A task that also updated the backlog is still document:
+	// the bookkeeping rides along.
+	case v[VerbEditDoc] > 0:
 		return ActivityDocument, ConfMed
+	// Bookkeeping alone (backlog, its page, memory notes, the mirror sync) is hygiene, not documentation
+	// (labeling skill, 2026-10-24). Why it was done (a standing rule) is the trigger's job.
+	case v[VerbBookkeeping] > 0:
+		return ActivityHygiene, ConfMed
 	// Committing, pushing or opening a PR with nothing edited in this task: the change was made in an
 	// earlier task, and this one files it.
 	case v[VerbGitCommit] > 0 || v[VerbGitPush] > 0 || v[VerbPRCreate] > 0:

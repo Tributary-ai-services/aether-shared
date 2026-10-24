@@ -24,6 +24,11 @@ type goldTask struct {
 	} `json:"calls"`
 }
 
+// defaultBookkeeping is the research corpus's bookkeeping list: the backlog file and both of its published pages,
+// memory notes and the mirror-sync scripts. It is a tenant's config, here for the measurement only.
+const defaultBookkeeping = "BACKLOG.md,BACKLOG.artifact,CLAUDE-PLANS-BACKLOG,artifact/8f9c849f,artifact/JjZKzZLRHP9i8yAkqtdUmx," +
+	"/memory/,MEMORY.md,sync-to-repo,refresh-pr-strip"
+
 // TestActivityAgainstGold measures the coarse activity against labeled tasks.
 //
 // Two numbers matter because the table abstains: coverage (how many tasks it claims) and precision when
@@ -40,7 +45,7 @@ func TestActivityAgainstGold(t *testing.T) {
 	for _, s := range strings.Split(envOr("SDLC_ACTIVITY_SPLITS", "dev"), ",") {
 		want[strings.TrimSpace(s)] = true
 	}
-	bookkeeping := strings.Split(envOr("SDLC_BOOKKEEPING", "BACKLOG.md,BACKLOG.artifact.html,/memory/,MEMORY.md"), ",")
+	bookkeeping := strings.Split(envOr("SDLC_BOOKKEEPING", defaultBookkeeping), ",")
 	show := os.Getenv("SDLC_ACTIVITY_SHOW") == "1"
 
 	fh, err := os.Open(path)

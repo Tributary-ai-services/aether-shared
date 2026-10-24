@@ -11,6 +11,11 @@ func edit(path string) ToolCall            { return ToolCall{Name: "Edit", Targe
 func tool(name string) ToolCall            { return ToolCall{Name: name} }
 func task(calls ...ToolCall) ActivityInput { return ActivityInput{Calls: calls} }
 
+// book is a task under a tenant bookkeeping list like the corpus's: the backlog and its page, memory, the mirror sync.
+func book(calls ...ToolCall) ActivityInput {
+	return ActivityInput{Calls: calls, Bookkeeping: []string{"BACKLOG.md", "artifact/backlog-page", "/memory/", "sync-to-repo"}}
+}
+
 func TestExtractActivity(t *testing.T) {
 	cases := []struct {
 		name string
@@ -29,7 +34,13 @@ func TestExtractActivity(t *testing.T) {
 		{"docs edit", task(edit("/repo/docs/guide.md")), ActivityDocument, ConfMed},
 		{"artifact publish", task(tool("Artifact")), ActivityDocument, ConfMed},
 		{"append to a doc", task(bash("cat >> notes/runbook.md <<'EOF'\n- step\nEOF")), ActivityDocument, ConfMed},
-		{"bookkeeping edit", ActivityInput{Calls: []ToolCall{edit("/root/BACKLOG.md")}, Bookkeeping: []string{"BACKLOG.md"}}, ActivityDocument, ConfMed},
+		{"bookkeeping edit", book(edit("/root/BACKLOG.md")), ActivityHygiene, ConfMed},
+		{"backlog page publish", book(ToolCall{Name: "Artifact", Target: "https://claude.ai/artifact/backlog-page"}), ActivityHygiene, ConfMed},
+		{"other page publish", book(ToolCall{Name: "Artifact", Target: "https://claude.ai/artifact/report"}), ActivityDocument, ConfMed},
+		{"memory note", book(ToolCall{Name: "Write", Target: "/home/u/.claude/projects/x/memory/note.md"}), ActivityHygiene, ConfMed},
+		{"mirror sync", book(bash("tas-claude/scripts/sync-to-repo.sh")), ActivityHygiene, ConfMed},
+		{"README and backlog: document wins", book(edit("/repo/README.md"), edit("/root/BACKLOG.md")), ActivityDocument, ConfMed},
+		{"backlog grep is not a write", book(bash("grep -n OPS-21 /root/BACKLOG.md")), "", ConfLow},
 		{"commit only", task(bash("git add -A && git commit -m 'x'"), bash("git push -u origin feat/x")), ActivityHygiene, ConfLow},
 		{"open PR only", task(bash("gh pr create --title t --body b")), ActivityHygiene, ConfLow},
 		{"pr view only", task(bash("gh pr checks 12")), ActivityReviewMerge, ConfLow},

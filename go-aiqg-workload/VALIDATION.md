@@ -179,7 +179,7 @@ The feature vector deliberately excludes attribution — `source_app`, path, pri
 
 The follow-up is therefore a split the design does not currently make: **poolable features** (structural, shareable as centroids) versus **tenant-local features** (attribution, usable for learning, never shared). The learner should see both; Tier C should see only the first. Recorded here rather than built, because it should be designed against a real customer segment rather than guessed at.
 
-# Coarse activity (`ca-1`) — against labeled agent tasks
+# Coarse activity (`ca-2`) — against labeled agent tasks
 
 `ExtractActivity` reads one task's tool calls (names, commands, paths), counts verbs from a fixed
 enum and picks an SDLC activity by an ordered table, or abstains. Measured 2026-10-22 against 621
@@ -188,30 +188,40 @@ labeled tasks from the research corpus (`tas-session-corpus`, exported by
 Rules were tuned on **dev** only; **control** (the audit's held-out turns) and **human** (the 18
 hand-reviewed turns) were run once, aggregates only.
 
-| split | tasks | claimed (coverage) | right when claimed | right over all tasks | old regex detector, always claims |
-|---|---|---|---|---|---|
-| dev (tuned on) | 250 | 163 (65%) | 85% (CI 78-89%) | 55% | 64% |
-| control (held out) | 285 | 183 (64%) | **75% (CI 68-81%)** | 48% | 58% |
-| human (held out, n=86 tasks in 18 turns) | 86 | 56 (65%) | 82% (CI 70-90%) | 53% | 70% |
+**`ca-2` (2026-10-24)** follows the labeling skill's split of `document` and `maintain_hygiene`:
+documentation about the product or code (READMEs, API docs, runbooks, reports) is `document`; project
+bookkeeping (the backlog and its published page, memory notes, the mirror sync) is `maintain_hygiene`,
+and a task doing both is `document`. The corpus labels were moved to the new definition by rule
+(`scripts/split_bookkeeping.py`, 82 tasks), so these numbers are against the relabeled sets.
 
-By confidence on control: high (deploy, build, merge) 81%, med (implement, test, document) 80%, low
-(hygiene, PR review) 57%. Per class on control: review_merge recall 0.92 / precision 0.75; document
-0.74 / 0.84; hygiene 0.77 / 0.68; implement 0.42 / 0.82; deploy 0.61 / 0.65; build_image 0.50 / 0.78;
-test_verify 0.18 / 0.60.
+| split | tasks | claimed (coverage) | right when claimed | right over all tasks |
+|---|---|---|---|---|
+| dev (tuned on) | 250 | 168 (67%) | 87% (CI 81-91%) | 58% |
+| control (held out) | 285 | 188 (66%) | **76% (CI 69-81%)** | 50% |
+| human (held out, n=86 tasks in 18 turns) | 86 | 57 (66%) | 82% (CI 71-90%) | 55% |
+
+By confidence on control: high (deploy, build, merge) 81%, med (implement, test, document, bookkeeping)
+82%, low (commit-only hygiene, PR review) 54%. On control, `maintain_hygiene` is recall 0.81 / precision
+0.81 (was 0.77 / 0.68) and `document` 0.79 / 0.70.
+
+`ca-1` (2026-10-22, before the split, against the old labels): control 75% (CI 68-81%) at 64% coverage,
+48% over all tasks; dev 85% at 65%; human 82% at 65%. The old regex detector, which always claims, was
+right on 58% of control tasks.
 
 ## Reading it
 
 - **It trades coverage for precision; it does not beat the detector on total right.** The detector is
-  right on more tasks overall (58% vs 48% on control) because it always answers. `ca-1` abstains on a
+  right on more tasks overall (58% vs 50% on control) because it always answers. The table abstains on a
   third of tasks and is right three times in four when it answers. It is a feature for the back
   channel and a prior for the semantic tier, not a labeler. Neither reaches the 85% graduation bar.
 - **Read-only work abstains by design.** `operate_diagnose`, `design`, `triage`, `review_plan` and
   `discuss` are never emitted: a `kubectl get` after a rollout is labeled `test_verify`, the same call
   during an incident `operate_diagnose`, and only purpose separates them. Most `test_verify` misses
   are live-system checks of this kind.
-- **The labels file backlog and memory edits under `document`**, while the skill lists backlog under
-  `maintain_hygiene`. The table follows the labels; the skill and the reviewer brief should be made to
-  agree.
+- **Bookkeeping needs the tenant's list.** Which paths and pages are bookkeeping is config
+  (`ActivityInput.Bookkeeping`), not built in; the measurement uses the corpus's list
+  (`defaultBookkeeping` in the gold test). An Artifact call is judged by its target, so a caller must
+  pass the artifact URL or path.
 - **Dev to control dropped 10 points**, so some rules fit dev. Agreement is with a reviewer model on
   dev and control (unaudited); only the human row is checked against John.
 - **Data limit, not an extractor limit:** the corpus truncates each command at 400 characters, so long
