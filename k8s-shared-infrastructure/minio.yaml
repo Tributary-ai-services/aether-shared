@@ -8,6 +8,10 @@ metadata:
     component: storage
 spec:
   replicas: 1
+  # Recreate, not RollingUpdate: the PVC is ReadWriteOnce, so a surge pod can
+  # never mount it and the rollout wedges with two pods fighting over /data.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: minio-shared
@@ -19,7 +23,12 @@ spec:
     spec:
       containers:
       - name: minio
-        image: minio/minio:latest
+        # MinIO withdrew its public images: docker.io/minio/minio (2025) and
+        # then quay.io/minio/minio (anonymous pulls 401 since 2026-10). This
+        # is the exact build that was running, exported from the um773dev
+        # containerd cache and mirrored into our registry. Pinned by digest.
+        image: registry-api.tas.scharber.com/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:52dfd5c0bbd38d3219f2058c7af216d9f9a27a994b7b5baad09bbd38866015ff
+        imagePullPolicy: IfNotPresent
         command:
         - minio
         - server
