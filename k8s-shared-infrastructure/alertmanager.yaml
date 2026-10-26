@@ -70,7 +70,8 @@ spec:
           mountPath: /alertmanager
       containers:
       - name: alertmanager
-        image: prom/alertmanager:latest
+        # Pinned 2026-10-26 to the digest that was already running (no content change).
+        image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
         ports:
         - containerPort: 9093
           name: alertmanager
