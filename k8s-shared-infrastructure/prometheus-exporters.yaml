@@ -21,7 +21,8 @@ spec:
     spec:
       containers:
       - name: redis-exporter
-        image: oliver006/redis_exporter:latest
+        # Pinned 2026-10-26 to the digest that was already running (no content change).
+        image: oliver006/redis_exporter:v1.95.0@sha256:afb21407aba3df1b4010899f155fc6b1ba2026c97b725d72aca4019d772e7b6b
         ports:
         - containerPort: 9121
           name: metrics
@@ -99,7 +100,8 @@ spec:
     spec:
       containers:
       - name: postgres-exporter
-        image: prometheuscommunity/postgres-exporter:latest
+        # Pinned 2026-10-26 to the digest that was already running (no content change).
+        image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
         ports:
         - containerPort: 9187
           name: metrics
@@ -180,7 +182,8 @@ spec:
     spec:
       containers:
       - name: kafka-exporter
-        image: danielqsj/kafka-exporter:latest
+        # Pinned 2026-10-26 to the digest that was already running (no content change).
+        image: danielqsj/kafka-exporter@sha256:66a2a117e3961180bdd6be9a0661b99f90c353bf4dab7841ad71dd10b1e5e7ba  # kafka_exporter 1.11.0 (Hub retagged v1.11.0 since)
         ports:
         - containerPort: 9308
           name: metrics

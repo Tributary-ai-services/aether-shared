@@ -47,7 +47,8 @@ spec:
     spec:
       containers:
       - name: redis
-        image: redis/redis-stack-server:latest
+        # Pinned 2026-10-26 to the digest that was already running (no content change).
+        image: redis/redis-stack-server:7.4.0-v8@sha256:798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a
         # Do NOT override command — the redis-stack entrypoint loads the modules.
         #
         # AOF is the durable log (fsync every second, the Redis default: bounded
