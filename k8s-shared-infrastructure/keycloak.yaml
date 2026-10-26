@@ -44,6 +44,21 @@ spec:
           requests:
             memory: "512Mi"
             cpu: "250m"
+        # startupProbe gates liveness until the first success, so a slow
+        # start is not mistaken for a hang. The node's data lives on a
+        # spinning USB disk: after an unclean stop, crash recovery spent >80s
+        # in "syncing data directory (fsync)" alone, and liveness (3 x 10s)
+        # killed it mid-recovery in a loop (2026-10-23). 90 x 10s = 15 min
+        # covers recovery; once started, liveness keeps its fast threshold.
+        startupProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U keycloak -d keycloak -h 127.0.0.1 -p 5432
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 90
         livenessProbe:
           exec:
             command:
