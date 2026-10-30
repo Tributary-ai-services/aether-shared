@@ -178,3 +178,71 @@ So this result is a **lower bound**. It says: a rule learned from tool structure
 The feature vector deliberately excludes attribution — `source_app`, path, principal — because those are customer data that must never reach pooled Tier-C aggregates. That exclusion is right for the *shared* layer and **wrong for local rule learning**: within a tenant, those fields never leave, and they are exactly the discriminative features an operator's filter selects on.
 
 The follow-up is therefore a split the design does not currently make: **poolable features** (structural, shareable as centroids) versus **tenant-local features** (attribution, usable for learning, never shared). The learner should see both; Tier C should see only the first. Recorded here rather than built, because it should be designed against a real customer segment rather than guessed at.
+
+# Coarse activity (`ca-2`) — against labeled agent tasks
+
+`ExtractActivity` reads one task's tool calls (names, commands, paths), counts verbs from a fixed
+enum and picks an SDLC activity by an ordered table, or abstains. Measured 2026-10-22 against 621
+labeled tasks from the research corpus (`tas-session-corpus`, exported by
+`scripts/export_activity_gold.py`; the export holds redacted real commands and stays in that repo).
+Rules were tuned on **dev** only; **control** (the audit's held-out turns) and **human** (the 18
+hand-reviewed turns) were run once, aggregates only.
+
+**`ca-2` (2026-10-24)** follows the labeling skill's split of `document` and `maintain_hygiene`:
+documentation about the product or code (READMEs, API docs, runbooks, reports) is `document`; project
+bookkeeping (the backlog and its published page, memory notes, the mirror sync) is `maintain_hygiene`,
+and a task doing both is `document`. The corpus labels were moved to the new definition by rule
+(`scripts/split_bookkeeping.py`, 82 tasks), so these numbers are against the relabeled sets.
+
+| split | tasks | claimed (coverage) | right when claimed | right over all tasks |
+|---|---|---|---|---|
+| dev (tuned on) | 250 | 168 (67%) | 87% (CI 81-91%) | 58% |
+| control (held out) | 285 | 188 (66%) | **76% (CI 69-81%)** | 50% |
+| human (held out, n=86 tasks in 18 turns) | 86 | 57 (66%) | 82% (CI 71-90%) | 55% |
+
+By confidence on control: high (deploy, build, merge) 81%, med (implement, test, document, bookkeeping)
+82%, low (commit-only hygiene, PR review) 54%. On control, `maintain_hygiene` is recall 0.81 / precision
+0.81 (was 0.77 / 0.68) and `document` 0.79 / 0.70.
+
+`ca-1` (2026-10-22, before the split, against the old labels): control 75% (CI 68-81%) at 64% coverage,
+48% over all tasks; dev 85% at 65%; human 82% at 65%. The old regex detector, which always claims, was
+right on 58% of control tasks.
+
+## Reading it
+
+- **It trades coverage for precision; it does not beat the detector on total right.** The detector is
+  right on more tasks overall (58% vs 50% on control) because it always answers. The table abstains on a
+  third of tasks and is right three times in four when it answers. It is a feature for the back
+  channel and a prior for the semantic tier, not a labeler. Neither reaches the 85% graduation bar.
+- **Read-only work abstains by design.** `operate_diagnose`, `design`, `triage`, `review_plan` and
+  `discuss` are never emitted: a `kubectl get` after a rollout is labeled `test_verify`, the same call
+  during an incident `operate_diagnose`, and only purpose separates them. Most `test_verify` misses
+  are live-system checks of this kind.
+- **Bookkeeping needs the tenant's list.** Which paths and pages are bookkeeping is config
+  (`ActivityInput.Bookkeeping`), not built in; the measurement uses the corpus's list
+  (`defaultBookkeeping` in the gold test). An Artifact call is judged by its target, so a caller must
+  pass the artifact URL or path.
+- **Dev to control dropped 10 points**, so some rules fit dev. Agreement is with a reviewer model on
+  dev and control (unaudited); only the human row is checked against John.
+- **Data limit, not an extractor limit:** the corpus truncates each command at 400 characters, so long
+  scripts lose their `docker build` tail (most build_image misses on dev). The gateway sees whole
+  commands.
+- Cost: about 240 µs for a five-call task with a 3 KB heredoc. It runs after the response (mode B),
+  never in the request path.
+
+## Reproducing
+
+```bash
+# in tas-session-corpus
+python3 scripts/export_activity_gold.py data/labels.human.v3.corrected.csv data/units.jsonl data/audit_queue.json data/activity_gold.jsonl
+# here; dev only unless the held-out splits are asked for, once per version
+SDLC_ACTIVITY_GOLD=/path/to/activity_gold.jsonl [SDLC_ACTIVITY_SPLITS=dev,control,human] go test -run TestActivityAgainstGold -v .
+```
+
+# Turn boundary (`tb-1`)
+
+`ExtractTurnBoundary` restates the corpus episode splitter, so it agrees with the corpus by
+construction; that is the point (one definition of a turn). What it has **not** been checked
+against is a real gateway request: whether Claude Code's API messages arrays put tool results,
+reminders and interjections in the same places the transcripts do. That check needs captured
+requests and waits for the cluster. Inline cost: 5.6 µs and no allocations for a 200-message array.
