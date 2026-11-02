@@ -46,23 +46,23 @@ metadata:
 spec:
   ipAddressPools:
   - local-pool
+  # Announce on the wired NIC only. WiFi stays up on the same subnet as a
+  # standby, and MetalLB would otherwise answer ARP for the VIP on both, so
+  # clients could learn either MAC. Node traffic moved to wired 2026-11-02.
+  # OPS-76.
+  interfaces:
+  - eno1
   # Pinned to um773dev deliberately — do not remove without reading this.
   #
-  # Public traffic reaches the cluster only over the WiFi subnet
-  # (192.168.68.0/22). The 10.10.0.0/24 cluster LAN added 2026-09-21 carries
-  # pod traffic only and has no route from the router.
-  #
   # ingress-nginx is a single replica on um773dev with
-  # externalTrafficPolicy: Cluster. Announcing .240 from any other node makes
-  # every public request take a second WiFi hop via VXLAN to reach it.
-  #
-  # Measured when pinova01 joined and won the election unpinned:
-  #   grafana TTFB ~260ms  ->  ~100ms once pinned back to um773dev
-  #   node-to-node WiFi ~70ms avg (220ms peak) vs 0.4ms over the LAN
+  # externalTrafficPolicy: Cluster, and `interfaces` above names um773dev's NIC
+  # (pinova01's is enp2s0). Announcing .240 from another node would also add a
+  # VXLAN hop to reach nginx. When pinova01 won the election unpinned over WiFi
+  # in 2026-09, grafana TTFB went from ~100ms to ~260ms.
   #
   # This can be relaxed once ingress-nginx runs on every node that may
   # announce, with externalTrafficPolicy: Local so traffic terminates where
-  # it lands.
+  # it lands, and `interfaces` lists both NICs.
   nodeSelectors:
   - matchLabels:
       kubernetes.io/hostname: um773dev
