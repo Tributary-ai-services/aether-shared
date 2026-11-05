@@ -109,6 +109,10 @@ Append-only. Rows are **inserted exactly once** at the moment the event occurs a
 | `token_revoked` | no | critical | A token was revoked (compromise, rotation, offboarding) |
 | `export_generated` | no | info | A customer-owned export was generated (spec §3.11) |
 | `audit_read` | no | critical | A TAS-staff read of audit data occurred (self-referential — see §10) |
+| `sdlc.turn_text.viewed` | no | warn | An admin viewed one turn's redacted session text in the SDLC flow view (Plan #21). Written **before** the text is returned; a view that cannot be audited is refused. `details`: `session_id`, `redactor_version`. Never contains the text |
+| `sdlc.settings.updated` | no | warn | A tenant admin turned the SDLC "show session content" setting on or off. `details`: `show_content` |
+| `sdlc.workflow.reassigned` | no | info | An admin placed a turn in a different SDLC workflow (`""` returns it to the linker's choice). `details`: `workflow_id` |
+| `sdlc.workflow.renamed` | no | info | An admin named an SDLC workflow. `details`: `name` |
 
 #### `details` payload schemas (per `event_type`)
 Validated at the writer via a Go struct per event_type (marshalled to `jsonb`). Representative schemas:
