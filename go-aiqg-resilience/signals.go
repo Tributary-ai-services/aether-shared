@@ -133,6 +133,25 @@ type Signals struct {
 	// samples are asserted to carry the weight of thirteen structural ones.
 	// Two floors, each applied at its own coverage, avoids the choice.
 	MinJudgedEfficacy int `json:"min_judged_efficacy,omitempty"`
+	// MinCustomerEfficacy excludes candidates whose CUSTOMER-SUPPLIED efficacy
+	// falls below this (0-100), rescaled from the signal's native scale.
+	//
+	// This is the Tier 3 floor, and it is different in kind from the other two:
+	// the customer owns the measurement. A support platform knows whether the
+	// ticket resolved, a coding harness whether the tests passed, a claims
+	// system whether a human overrode the extraction. None of that is knowable
+	// here, and all of it beats any judge we could write.
+	//
+	// It is a THIRD floor rather than a term folded into either of the others,
+	// for the reason MinJudgedEfficacy is separate from MinEfficacy and then
+	// one more: coverage differs again (a customer instruments some flows and
+	// not others), and a customer signal is tenant-private. Blending it into a
+	// shared mean would leak one tenant's opinion into another's routing.
+	//
+	// A verdict this floor decides must NAME its source — see
+	// QualitySignal.CustomerSignalSources and GateResult.Source. Selling "your
+	// own metric says the cheaper model held" requires saying which metric.
+	MinCustomerEfficacy int `json:"min_customer_efficacy,omitempty"`
 	// MaxAssuranceSeverity excludes candidates whose worst observed finding is
 	// more severe than this.
 	MaxAssuranceSeverity Severity `json:"max_assurance_severity,omitempty"`
@@ -159,7 +178,8 @@ const (
 
 // IsZero reports whether no gating is configured.
 func (s Signals) IsZero() bool {
-	return s.MinEfficacy == 0 && s.MinJudgedEfficacy == 0 && s.MaxAssuranceSeverity == "" &&
+	return s.MinEfficacy == 0 && s.MinJudgedEfficacy == 0 && s.MinCustomerEfficacy == 0 &&
+		s.MaxAssuranceSeverity == "" &&
 		s.MinSamples == 0 && s.MaxStalenessHours == 0 &&
 		s.ExcludeSynthetic == nil && s.OnInsufficientData == ""
 }
@@ -197,6 +217,9 @@ func (s Signals) Validate() error {
 	if s.MinJudgedEfficacy < 0 || s.MinJudgedEfficacy > 100 {
 		errs = append(errs, "min_judged_efficacy must be between 0 and 100")
 	}
+	if s.MinCustomerEfficacy < 0 || s.MinCustomerEfficacy > 100 {
+		errs = append(errs, "min_customer_efficacy must be between 0 and 100")
+	}
 	if s.MaxAssuranceSeverity != "" {
 		if _, ok := severityRank[Severity(strings.ToLower(string(s.MaxAssuranceSeverity)))]; !ok {
 			errs = append(errs, fmt.Sprintf("max_assurance_severity %q is not one of %s",
@@ -215,9 +238,10 @@ func (s Signals) Validate() error {
 	}
 	// A gate with no threshold gates nothing. Refusing it beats storing a rule
 	// whose author believes quality is being enforced.
-	if s.MinEfficacy == 0 && s.MinJudgedEfficacy == 0 && s.MaxAssuranceSeverity == "" &&
+	if s.MinEfficacy == 0 && s.MinJudgedEfficacy == 0 && s.MinCustomerEfficacy == 0 &&
+		s.MaxAssuranceSeverity == "" &&
 		(s.MinSamples > 0 || s.MaxStalenessHours > 0 || s.OnInsufficientData != "") {
-		errs = append(errs, "no quality floor is set (min_efficacy, min_judged_efficacy or max_assurance_severity), so nothing is gated and the other settings have no effect")
+		errs = append(errs, "no quality floor is set (min_efficacy, min_judged_efficacy, min_customer_efficacy or max_assurance_severity), so nothing is gated and the other settings have no effect")
 	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
@@ -252,6 +276,26 @@ type QualitySignal struct {
 	// judged ones; gating the judged floor on Samples would read that as
 	// strong evidence for a measurement that was never taken.
 	JudgedSamples int `json:"judged_samples,omitempty"`
+	// EfficacyCustomer is the mean customer-supplied outcome score (0-100,
+	// rescaled from the signal's native scale). Zero with CustomerSamples==0
+	// means "never reported", not "reported as zero" — the same nil-is-a-value
+	// discipline EfficacyJudged follows, and for a sharper reason: a customer
+	// who instruments nothing must never look like one reporting total failure.
+	EfficacyCustomer float64 `json:"efficacy_customer,omitempty"`
+	// EfficacyCustomerCoverage is CustomerSamples over Samples. Expect it to be
+	// low and uneven: outcomes arrive late, for some flows only, and often for a
+	// biased slice (an escalation is likelier to be recorded than a success).
+	// Reported rather than folded in, so an instrumented workload is never
+	// silently compared against an uninstrumented one.
+	EfficacyCustomerCoverage float64 `json:"efficacy_customer_coverage,omitempty"`
+	// CustomerSamples is the evidence behind EfficacyCustomer, counted
+	// separately from Samples and from JudgedSamples.
+	CustomerSamples int `json:"customer_samples,omitempty"`
+	// CustomerSignalSources names the distinct source labels behind
+	// EfficacyCustomer, sorted and deduplicated. It exists so a verdict can say
+	// WHICH of the customer's signals decided it; an unnamed customer verdict
+	// is not defensible to the customer who supplied it.
+	CustomerSignalSources []string `json:"customer_signal_sources,omitempty"`
 	// WorstAssurance is the worst severity observed.
 	WorstAssurance Severity `json:"worst_assurance,omitempty"`
 	// Samples is the evidence behind the aggregate.
@@ -269,6 +313,17 @@ type GateResult struct {
 	// assurance — so "excluded by signals" is never the whole answer.
 	Dimension string
 	Reason    string
+	// Source names the customer signal labels behind a verdict the CUSTOMER
+	// floor decided. Empty for every other outcome, including a customer
+	// abstention, because naming a signal that did not decide anything is
+	// its own kind of misleading.
+	//
+	// It exists to satisfy the Tier 3 rule that a verdict influenced by a
+	// customer-supplied signal must say so and name the source. Selling
+	// "excluded on quality" is a different claim from "excluded because YOUR
+	// ticket-resolution rate said so", and only the second is defensible to
+	// the customer who supplied it.
+	Source []string
 }
 
 // Gate evaluates a candidate against the floors.
@@ -318,13 +373,58 @@ func (s Signals) Gate(sig QualitySignal, found bool) GateResult {
 				Reason: fmt.Sprintf("judged efficacy %.0f is below the floor of %d", sig.EfficacyJudged, s.MinJudgedEfficacy)}
 		}
 	}
+	// The customer floor carries its own evidence test too, against
+	// CustomerSamples. It diverges even harder than the judged one: outcomes
+	// arrive late and only for instrumented flows, so a cell can hold a
+	// thousand structural samples, fifty judged ones and two customer ones.
+	// Gating on Samples here would let two late tickets decide a verdict.
+	customerAbstained := ""
+	if s.MinCustomerEfficacy > 0 {
+		if sig.CustomerSamples < s.MinSamplesOrDefault() {
+			if s.OnInsufficientData == InsufficientExclude {
+				return GateResult{Eligible: false, Dimension: "customer_samples",
+					Reason: fmt.Sprintf("customer quality evidence is insufficient (%d customer samples against a floor of %d) and this rule excludes unmeasured candidates",
+						sig.CustomerSamples, s.MinSamplesOrDefault())}
+			}
+			customerAbstained = fmt.Sprintf("customer efficacy gate abstained: %d customer samples against a floor of %d",
+				sig.CustomerSamples, s.MinSamplesOrDefault())
+		} else if sig.EfficacyCustomer < float64(s.MinCustomerEfficacy) {
+			// The only branch that names a source, because it is the only one
+			// where a customer signal decided the verdict.
+			return GateResult{Eligible: false, Dimension: "customer_efficacy",
+				Reason: fmt.Sprintf("customer-supplied efficacy %.0f is below the floor of %d (source: %s)",
+					sig.EfficacyCustomer, s.MinCustomerEfficacy, sourcesDesc(sig.CustomerSignalSources)),
+				Source: sig.CustomerSignalSources}
+		}
+	}
 	if s.MaxAssuranceSeverity != "" && sig.WorstAssurance != "" &&
 		!sig.WorstAssurance.AtMost(s.MaxAssuranceSeverity) {
 		return GateResult{Eligible: false, Dimension: "assurance",
 			Reason: fmt.Sprintf("worst observed finding %q exceeds the limit of %q",
 				sig.WorstAssurance, s.MaxAssuranceSeverity)}
 	}
-	return GateResult{Eligible: true, Reason: judgedAbstained}
+	// Both sub-floors can abstain on the same candidate. Reporting only one
+	// would say "we could not judge it" while silently also not knowing what
+	// the customer thought, so they are joined rather than overwritten.
+	abstained := make([]string, 0, 2)
+	if judgedAbstained != "" {
+		abstained = append(abstained, judgedAbstained)
+	}
+	if customerAbstained != "" {
+		abstained = append(abstained, customerAbstained)
+	}
+	return GateResult{Eligible: true, Reason: strings.Join(abstained, "; ")}
+}
+
+// sourcesDesc renders customer signal labels for a verdict reason. An empty set
+// reads as "unnamed" rather than as an empty string, because a customer verdict
+// that cannot name its source is a defect worth seeing in the reason text
+// itself, not a blank space in a sentence.
+func sourcesDesc(sources []string) string {
+	if len(sources) == 0 {
+		return "unnamed"
+	}
+	return strings.Join(sources, ", ")
 }
 
 func samplesDesc(sig QualitySignal, found bool, floor int) string {

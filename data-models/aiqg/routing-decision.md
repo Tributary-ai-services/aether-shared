@@ -426,6 +426,50 @@ surface on dashboards; they are dropped only from the aggregate the router
 reads. Rows that name no grader at all are treated as self-graded — unknown must
 not read as independent.
 
+**`min_customer_efficacy` is a third floor, and the customer owns the ruler.**
+It gates `aiqg.model_quality.efficacy_customer` — the mean of the outcome signals
+the customer POSTs to `/api/v1/feedback`, rescaled to 0-100 from each signal's
+native scale. It is the Tier 3 floor, and it is separate from the other two for
+the coverage reason above plus one that is specific to it: **a customer signal is
+tenant-private.** Folding it into any shared mean would leak one tenant's opinion
+of a model into another tenant's routing, so it is tenant-scoped at every hop and
+never reaches `aiqg.model_verbosity` or any cross-tenant aggregate.
+
+Why it matters more than the judged floor, despite being thinner: a support
+platform knows whether the ticket resolved, a coding harness whether the tests
+passed, a claims system whether a human overrode the extraction. None of that is
+knowable here, and all of it beats any judge we could write. It is also the only
+floor whose metric the customer chose, which makes a non-inferiority verdict
+defensible in a way "trust our judge" is not.
+
+**It tests its own evidence too, against `customer_samples`.** This diverges even
+harder than the judged count: outcomes arrive late — seconds to days — and only
+for instrumented flows, so a cell can hold a thousand structural samples, fifty
+judged ones and two customer ones. A floor reading `samples` here would let two
+late tickets decide a verdict. Both sub-floors can abstain on the same candidate,
+and both abstentions are reported, because "we could not judge it" and "the
+customer never told us" are different facts.
+
+**A verdict this floor decides names its source.** `GateResult.Source` carries the
+distinct signal labels behind the mean (`ticket_resolved`, `tests_passed`, …) and
+the reason text names them inline; a customer verdict that cannot name its source
+renders as `unnamed`, so the defect is visible in the sentence rather than as a
+blank. Nothing else populates `Source` — not a pass, not an abstention — because
+naming a signal that decided nothing is its own kind of misleading.
+
+**`efficacy_customer` 0 with `customer_samples` 0 means never reported**, not
+reported as zero. The distinction is sharper here than for the judged floor: a
+customer who has instrumented nothing is numerically identical to one reporting
+total failure, so conflating them would exclude every uninstrumented candidate
+the moment anyone set this floor.
+
+**Late outcomes append, they never mutate.** A customer outcome arrives after the
+response event is already scored and immutable, so it lands as a new row in
+`aiqg.response_feedback` and is picked up by the next aggregate refresh. Nothing
+rewrites the original score, which is also why `efficacy_customer` is a column on
+`model_quality` and *not* on `event_metrics` — an event cannot carry a fact that
+did not exist when it was emitted.
+
 ### 5.9 Cache keys — three caches, three keys
 
 > **Detailed specification:** [[cache-keys-and-sessions]] covers key construction,
