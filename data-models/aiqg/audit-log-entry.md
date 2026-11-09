@@ -114,6 +114,8 @@ Append-only. Rows are **inserted exactly once** at the moment the event occurs a
 | `sdlc.workflow.reassigned` | no | info | An admin placed a turn in a different SDLC workflow (`""` returns it to the linker's choice). `details`: `workflow_id` |
 | `sdlc.workflow.renamed` | no | info | An admin named an SDLC workflow. `details`: `name` |
 | `imports.trace.viewed` | no | warn | An admin viewed one imported session's full trace (Reports ▸ Imported Traces), redacted, under the same tenant content setting as `sdlc.turn_text.viewed`. Written **before** the trace is returned; a view that cannot be audited is refused. `resource_type`: `imported_trace`. `details`: `redacted`. Never contains the text |
+| `sdlc.auditor.granted` | no | warn | A tenant admin made a user an auditor of the tenant's SDLC labels (AIQG-72). The user may belong to another tenant; they keep it. Written when a membership is created or the `aiqg-auditor` realm role is granted. `resource_id`: the user's Keycloak id. `details`: `user_email`, `home_tenant`, `role_granted` |
+| `sdlc.auditor.revoked` | no | warn | A tenant admin ended a user's audit membership. The `aiqg-auditor` role is kept (it grants nothing without a membership). `resource_id`: the user's Keycloak id |
 
 #### `details` payload schemas (per `event_type`)
 Validated at the writer via a Go struct per event_type (marshalled to `jsonb`). Representative schemas:
