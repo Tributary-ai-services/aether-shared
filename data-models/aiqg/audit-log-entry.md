@@ -113,6 +113,7 @@ Append-only. Rows are **inserted exactly once** at the moment the event occurs a
 | `sdlc.settings.updated` | no | warn | A tenant admin turned the SDLC "show session content" setting on or off. `details`: `show_content` |
 | `sdlc.workflow.reassigned` | no | info | An admin placed a turn in a different SDLC workflow (`""` returns it to the linker's choice). `details`: `workflow_id` |
 | `sdlc.workflow.renamed` | no | info | An admin named an SDLC workflow. `details`: `name` |
+| `imports.trace.viewed` | no | warn | An admin viewed one imported session's full trace (Reports ▸ Imported Traces), redacted, under the same tenant content setting as `sdlc.turn_text.viewed`. Written **before** the trace is returned; a view that cannot be audited is refused. `resource_type`: `imported_trace`. `details`: `redacted`. Never contains the text |
 
 #### `details` payload schemas (per `event_type`)
 Validated at the writer via a Go struct per event_type (marshalled to `jsonb`). Representative schemas:
