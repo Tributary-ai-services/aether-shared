@@ -5,21 +5,28 @@
 **Metadata**
 
 ```yaml
-service: aiqg-dashboard-be (structure model, membership, proposer, rollups, API) + tas-llm-router (token owner + baggage user on events) + aiqg-import (uploader on imported sessions) + aiqg-ui (Organization settings, unit filters, By-unit report)
-models: OrgUnit, OrgMember, WorkflowFunction, OrgProposal
+service: aiqg-dashboard-be (structure model, membership, roles, targets, follow-ups, proposer, rollups, API) + tas-llm-router (token owner + baggage user on events) + aiqg-import (uploader on imported sessions) + aiqg-ui (new Home, Follow-ups, Ask, Settings ▸ Organization)
+models: OrgUnit, OrgMember, TokenPlacement, PersonDefaultTeam, WorkflowOwner, OrgTarget, OrgProposal, FollowUp, FollowUpEvent, HomePin
 databases:
-  - aiqg.org_unit (Postgres, aiqg db) — NEW
-  - aiqg.org_member (Postgres, aiqg db) — NEW, append-only, effective-dated
-  - aiqg.workflow_function (Postgres, aiqg db) — NEW, append-only
+  - aiqg.org_unit (Postgres, aiqg db) — NEW: orgs and nestable teams
+  - aiqg.org_member (Postgres, aiqg db) — NEW, append-only, effective-dated, many-to-many, carries the role
+  - aiqg.token_placement (Postgres, aiqg db) — NEW, append-only: which org (and team) a token bills to
+  - aiqg.person_default_team (Postgres, aiqg db) — NEW, append-only
+  - aiqg.workflow_owner (Postgres, aiqg db) — NEW, append-only (was workflow_function in rev 2)
+  - aiqg.org_target (Postgres, aiqg db) — NEW, append-only
   - aiqg.org_proposal (Postgres, aiqg db) — NEW
+  - aiqg.followup, aiqg.followup_event (Postgres, aiqg db) — NEW
+  - aiqg.home_pin (Postgres, aiqg db) — NEW
   - aiqg.token (Postgres) — EXTENDED: owner_sub, owner_email
   - aiqg.imported_trace, aiqg.sdlc_turn (Postgres) — EXTENDED: actor columns
   - aiqg.event_metrics (Timescale) — EXTENDED: token_id, owner_sub; NEW rollup event_metrics_actor_1h
+reuses: aiqg.report_snapshot (frozen snapshot on Forward), aiqg.digest_subscription + digest worker (weekly email), Plan #20 data MCP (Ask), aiqg.route_rule (recommendations, later)
 extends: tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md (adds the human actor; keeps its header contract and ladder)
 vocabulary_from: tas-session-corpus/docs/DESIGN-continuous-labeling.md §8.3-8.8, tas-session-corpus/docs/LABELS.md
-version: 0.1.0
-last_updated: 2026-11-18 (rev 2: F1/F2 added as P2a)
-status: proposed (D1-D3 decided with John 2026-11-18; D4 open)
+wireframe: https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb
+version: 0.2.0
+last_updated: 2026-11-18 (rev 3: GitHub-style many-to-many structure, org pays, owners + targets, executive Home, Forward + Follow-ups, Ask, recommendations as future work)
+status: proposed (D1-D12 decided with John 2026-11-18)
 plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
 ```
 
@@ -29,12 +36,16 @@ plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
 
 ### Purpose
 
-Every hierarchy TAS has today exists for **data isolation and access**: tenant, Space, AIQG account, realm roles. None of it describes **structure**: which business function, team or person an AI request belongs to. AIQG is flat below the tenant, so cost, activity mix, workflows and CLEAR cannot be rolled up by function, team or person.
+Every hierarchy TAS has today exists for **data isolation and access**: tenant, Space, AIQG account, realm roles. None of it describes **structure**: which org, team or person an AI request belongs to. AIQG is flat below the tenant, so cost, activity mix, workflows and CLEAR cannot be rolled up by org, team or person, and there is nobody to hand a problem to.
 
-This document adds two things:
+This document adds four things:
 
-1. **A structure model** inside a tenant: nestable org units (for example *function → team*) whose members are people, agents, tokens, apps and repos. It is separate from isolation and never grants or restricts access.
-2. **Actor attribution**: every gateway event, imported session and SDLC turn records *who did it*, so it can be mapped to a unit.
+1. **A structure model** inside a tenant, shaped like GitHub's: orgs, teams owned by an org (nestable), and people who can belong to any number of orgs and teams (§5).
+2. **Actor attribution**: every gateway event, imported session and SDLC turn records *who did it* (§4).
+3. **Ownership and targets**: every org and team has an owner, and owners set the targets that decide what counts as a problem (§5.3, §8).
+4. **An executive Home** that lands on what you own, puts problems first, lets you hand a problem to its owner, and answers questions in plain language (§10).
+
+The primary reader of Home is a CEO or CIO. They will rarely open Traffic Explorer. They look for what is wrong, drill a level or two, and forward the problem to the manager who owns it.
 
 ### Decisions
 
@@ -43,14 +54,22 @@ This document adds two things:
 | D1 | **AIQG owns units and membership.** New `aiqg.org_*` tables in the aiqg database. Keycloak groups and Aether Org/Team/`department` are at most *seed sources* for proposals (§7), never the source of truth. | John, 2026-11-18 |
 | D2 | **The human actor comes from the token, refined by baggage.** The token's owner (the Keycloak user who issued it) is the baseline identity on every event. W3C `baggage` `user.id`, sent by callers that share one token across many people, refines it. Both are stored; neither overwrites the other. | John, 2026-11-18 |
 | D3 | **Levels come from the session-corpus design, unchanged.** request < turn < task < workflow, inside a session (§2). This document adds no level. The attribution doc's `flow` is not a level, and its `agent` becomes an actor. | John, 2026-11-18 |
-| D4 | **Membership is single-primary and effective-dated.** Each member has one primary unit per tenant at any instant (rollups sum to the tenant total); changes are append-only with `valid_from`; an admin write that cannot write its audit row is refused. | **Open** — recommended, not yet confirmed |
+| D4 | **Membership is many-to-many, like GitHub.** A person can be in any number of orgs and any number of teams. A team belongs to exactly one org and can nest under one parent team. Membership is append-only and effective-dated. *(Revised: rev 2 proposed single-primary.)* | John, 2026-11-18 |
+| D5 | **The org pays.** Cost lands on the token's org, not on the person. A token belongs to one org and optionally one team. A token with no org is a **personal** token and bills to its owner's personal scope, like a GitHub personal account. Existing tokens are placed in a default org. | John, 2026-11-18 |
+| D6 | **Every org and team has an owner.** New per-unit roles: org `owner` / `manager` / `member`, team `manager` / `member` (GitHub's org owner and team maintainer). Forwarding and the landing view depend on it. | John, 2026-11-18 |
+| D7 | **You land on what you own.** Home opens on the units where you are owner or manager; a tenant admin (CEO) lands on all orgs. When the scope holds one org, Home opens one level down on its teams. | John, 2026-11-18 |
+| D8 | **Problems first, judged against the owner's own targets.** "Red" means the unit missed a target its owner set, not that it ranks below a peer. No target means no status colour, only the number. | John, 2026-11-18 |
+| D9 | **Forward instead of investigate.** A problem is handed to the owning manager with a frozen snapshot and a reply-by date, and tracked in Follow-ups (open → acknowledged → resolved). | John, 2026-11-18 |
+| D10 | **✦ Ask is scoped to the viewer and cites its sources.** Built on the Plan #20 data MCP server; model calls go through our own gateway; every answer shows how it was computed. | John, 2026-11-18 |
+| D11 | **Person-level ranking is for owners and managers only** by default (tenant setting). | John, 2026-11-18 |
+| D12 | **Plain language on Home.** Spend, Speed, Quality, Data safety, Uptime, Overall; the CLEAR letter is shown on hover, not as the label. **No left-hand navigation on Home**: it keeps today's clean layout, with Ask and Follow-ups in the header. | John, 2026-11-18 |
 
 ### Not this
 
-- **Not access control.** A unit never decides what anyone can see. Isolation stays tenant / Space / realm role.
-- **Not billing.** Per-unit cost is an internal chargeback view. The patent freedom-to-operate pass in the attribution doc still gates any per-agent *billing*.
+- **Not access control.** Roles decide where you land, who may edit structure and targets, and who sees person-level rankings (D11). They do not hide tenant data: isolation stays tenant / Space / realm role, and any tenant user can still open Traffic Explorer as today.
+- **Not billing to the customer.** "The org pays" is internal attribution of the tenant's invoice. The patent freedom-to-operate pass in the attribution doc still gates any per-agent *billing*.
 - **Not a new level.** "Workflow" remains Plan #21's unit. "Flow" remains a caller-set run or experiment id.
-- **Not Aether's org model.** Aether Organization / Team / membership is untouched.
+- **Not Aether's org model.** Aether Organization / Team / membership is untouched. The Spend Governor's `Tenant ─ Org ─ Team (nestable) ─ User` hierarchy (`SPEND_GOVERNOR_DESIGN.md` §2.1) is the same shape, so its budgets can attach to these units later.
 
 ---
 
@@ -83,16 +102,30 @@ The attribution doc (`tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md`, "Lock
 
 The stored router column `workflow` stays and is shown as **"workload type"** (already the UI convention, `aiqg-ui` `TrafficExplorerPage.tsx` `HierarchyPanel`). It is not the workflow above.
 
-### 2.3 Two axes, kept apart
+### 2.3 Structure terms
 
-| Axis | Question | Attached to | Resolves to |
+| Term | Meaning | GitHub equivalent |
+|---|---|---|
+| **tenant** | the customer; holds orgs, people and policy | enterprise |
+| **org** | a top-level unit that **pays** for its tokens' traffic and has an owner | organization |
+| **team** | a unit inside one org; may nest under one parent team | team / child team |
+| **personal scope** | a person's own space; holds their personal tokens | personal account |
+| **owner / manager** | who answers for an org or team | org owner / team maintainer |
+
+### 2.4 Three ways to count, kept apart
+
+Many-to-many membership means a person's work cannot simply be summed into every team they belong to. Each view answers a different question and says which it is:
+
+| View | Question | Decided by | Sums to the invoice? |
 |---|---|---|---|
-| **Who did it** (actor) | which person, and which agent, produced this work | request, turn, session | an **org unit** via membership |
-| **What it served** | which business function the work was for | workflow | a **business function** unit via `workflow_function` |
+| **Billed** | which org pays | the token's org (§5.2); no org → owner's personal scope | **yes** |
+| **Reported under** | which team inside that org it shows under | the token's team; else the person's default team in that org; else "(no team)" | **yes**, within the org |
+| **Involving** | which teams' people did it | every team the resolved person belongs to | no — overlaps, labelled "involving" |
+| **Served** | which org or team the work was *for* | the workflow's owner (§6) | no — only workflow-linked work |
 
-Kept separate because they disagree routinely: an engineer on the platform team (who) can spend a week on a sales-demo workflow (what). Collapsing them makes one of the two views wrong.
+"Who did it" and "what it served" disagree routinely: an engineer on the Platform team can spend a week on a Sales demo workflow. Home shows Billed and Reported-under by default; Involving and Served are tabs, never blended into one chart.
 
-**Actor kinds:** `person` (a Keycloak user, by `sub`), `user_key` (a pseudonymous baggage `user.id`), `agent` (an `agent_id` or an agent surrogate cluster), `token` (`token_id`), `source_app`, `repo`. Only `person` and `user_key` are humans. The others are members so that work with no known human still lands in a unit.
+**Actor kinds:** `person` (a Keycloak user, by `sub`), `user_key` (a pseudonymous baggage `user.id`), `agent` (an `agent_id` or an agent surrogate cluster), `token` (`token_id`), `source_app`, `repo`. Only `person` and `user_key` are humans.
 
 ---
 
@@ -104,12 +137,16 @@ Kept separate because they disagree routinely: an engineer on the platform team 
 | Gateway validate | `/internal/auth/validate` returns `token_id, tenant_id, aiqg_account_id, source_app, suspended`. **No `label`, no owner** | `internal/handlers/internal_auth.go:39-46`; router `pkg/aiqg/tokens/dashboard_resolver.go:81-87` |
 | Gateway user | `AgentContext.user_id` comes **only** from baggage `user.id`; self-asserted | router `pkg/aiqg/events/event.go:132-176`, `builder.go:321-444` |
 | Token id on events | `tas_auth_token_id` on the **request** event only; not on the response event, not promoted to Loki | router `event.go:77-123`, `emitter.go:368-400` |
-| Timescale | `event_metrics` has `user_id, agent_id, principal_id, flow_id, conversation_id, source_app, identity_source`; **no token_id**. Rollups group by `(bucket, tenant, workflow, vendor)` only. Raw rows kept **90 days** | aether-shared `timescaledb-migrations/004:47-63,130,176`, `006:26` |
+| Timescale | `event_metrics` has `user_id, agent_id, principal_id, flow_id, conversation_id, source_app, identity_source`, `tags`; **no token_id**. Rollups group by `(bucket, tenant, workflow, vendor)` only. Raw rows kept **90 days** | aether-shared `timescaledb-migrations/004:47-63,130,176`, `006:26` |
 | Per-identity rollups | computed from raw rows at query time (`by = agent \| user \| client_ip`) | aiqg-dashboard-be `internal/timescale/client.go:1232-1300` |
+| Data exposure | tenant-wide counts **by pattern** from `event_metrics.tags` (`QueryTagCounts`); **no per-app split** | `internal/handlers/metrics.go:395-440` |
+| Frozen reports | `aiqg.report_snapshot`: immutable JSONB body by id, append-only | `migrations/004_report_snapshot.sql` |
+| Data MCP (Plan #20) | Phase 0 live (tenant-filtered `aiqg_mcp` views, scoped tokens); Phase 1 draft #178 has two tools, `usage_timeseries` and `cost_breakdown` | BACKLOG Plan #20 |
+| Home page | four link cards (Live Monitor, Traffic Explorer, Governance, Reports) under the spend-cap and exposure banners; no left-hand nav | aiqg-ui `src/pages/HomePage.tsx` |
 | Imported sessions | `imported_trace` has **no uploader or token**; the code adapter sets no `Subject` | `migrations/015`, `039`; aiqg-import `adapter/code/code.go:181-182` |
 | SDLC | `sdlc_turn` has `repo`, `session_id`, **no actor**. Ticket prefixes hard-coded `(OPS\|SEC\|DOC\|AIQG\|AB\|AM\|TEST\|P\d\|PLAN\|AUTH\|ARCH)-\d{1,3}` | `migrations/038:25-41`; `internal/sdlclabel/workflows.go:48` |
 | Override pattern | `sdlc_workflow_name`: append-only INSERT, newest wins via LATERAL; audit write is **best-effort** | `migrations/041:86-94`; `internal/store/sdlc_flows.go:450-453,719-725`; `internal/handlers/sdlc_flows.go:405-440` |
-| Structure | none: no team, department, project or unit table; Keycloak groups never read; `cohort` is an experiment selector | `migrations/011:15` |
+| Structure | none: no org, team, department or project table; Keycloak groups never read; `cohort` is an experiment selector | `migrations/011:15` |
 | Aether | `department` is free text on the org `MEMBER_OF` edge only; teams do not nest and reference the org by property; aether-be group helpers have no caller | aether-be `models/organization.go:99`, `services/team.go:46-50`, `services/user.go:756` |
 | Claude Code | sends `x-claude-code-session-id` and `metadata.user_id` (account uuid, device id, session id); no baggage | corpus design §8.4 |
 
@@ -132,7 +169,7 @@ Corrections this implies for the backlog: the attribution doc is **partially shi
 
 ### 4.2 Resolution
 
-Both values are stored on every event; the **resolved human** is computed at read time, so a membership fix re-attributes history without rewriting events.
+Both values are stored on every event; the **resolved person** is computed at read time, so a membership fix re-attributes history without rewriting events.
 
 ```
 resolved_person =
@@ -142,6 +179,8 @@ resolved_person =
 ```
 
 `identity_source` gains no new value; a new `actor_source ∈ {baggage_mapped, token_owner, jwt, unattributed}` is returned by the read API, not stored. When a mapped baggage user differs from the token owner, both are shown; that is the normal case for a shared service token, not an anomaly.
+
+The resolved person only drives the **Involving** view and the default-team fallback (§2.4). **Billing never depends on it**: it follows the token, which is authenticated.
 
 ### 4.3 Changes
 
@@ -163,55 +202,140 @@ resolved_person =
 
 ---
 
-## 5. Structure model (D1, D4)
+## 5. Structure model (D1, D4, D5, D6)
+
+### 5.1 Units and membership
 
 ```sql
--- One node in a tenant's org tree.
+-- An org, or a team inside one org. Teams may nest under one parent team.
 CREATE TABLE aiqg.org_unit (
   id          UUID PRIMARY KEY,
   tenant_id   UUID NOT NULL,
-  parent_id   UUID REFERENCES aiqg.org_unit(id),   -- NULL = top level
-  kind        TEXT NOT NULL CHECK (kind IN ('function','team','group')),
+  kind        TEXT NOT NULL CHECK (kind IN ('org','team')),
+  org_id      UUID REFERENCES aiqg.org_unit(id),   -- team: its org; org: NULL
+  parent_id   UUID REFERENCES aiqg.org_unit(id),   -- team: parent team or NULL (top-level team); org: NULL
   name        TEXT NOT NULL,
+  slug        TEXT NOT NULL,                       -- stable, URL-safe; survives renames
+  is_default  BOOLEAN NOT NULL DEFAULT false,      -- the tenant's default org (§5.2 migration); one per tenant
   archived_at TIMESTAMPTZ,
   created_by  TEXT NOT NULL,                       -- Keycloak sub
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, parent_id, name)
+  CHECK ((kind = 'org'  AND org_id IS NULL AND parent_id IS NULL)
+      OR (kind = 'team' AND org_id IS NOT NULL)),
+  UNIQUE (tenant_id, org_id, slug)
 );
+-- A parent team must be in the same org; enforced in the store layer (and by trigger), not expressible as a CHECK.
 
--- Who/what belongs to a unit, from when. Append-only: a move is a new row.
+-- Who belongs to a unit, in what role, from when. Many-to-many. Append-only:
+-- joining, leaving and a role change are each a new row.
 CREATE TABLE aiqg.org_member (
   id           BIGSERIAL PRIMARY KEY,
   tenant_id    UUID NOT NULL,
+  unit_id      UUID NOT NULL REFERENCES aiqg.org_unit(id),
   member_kind  TEXT NOT NULL CHECK (member_kind IN
-               ('person','user_key','agent','token','source_app','repo')),
-  member_key   TEXT NOT NULL,          -- sub | baggage user.id | agent id | token_id | source_app | repo short name
-  unit_id      UUID REFERENCES aiqg.org_unit(id),  -- NULL = removed from all units
+               ('person','user_key','agent','source_app','repo')),
+  member_key   TEXT NOT NULL,          -- sub | baggage user.id | agent id | source_app | repo short name
+  role         TEXT CHECK (role IN ('owner','manager','member')),  -- persons only; NULL for non-humans
+  op           TEXT NOT NULL CHECK (op IN ('add','remove')),
   valid_from   TIMESTAMPTZ NOT NULL,
-  source       TEXT NOT NULL CHECK (source IN ('admin','proposal_accepted','seed')),
+  source       TEXT NOT NULL CHECK (source IN ('admin','owner','proposal_accepted','seed')),
   set_by       TEXT NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX ON aiqg.org_member (tenant_id, member_kind, member_key, valid_from DESC);
+CREATE INDEX ON aiqg.org_member (tenant_id, member_kind, member_key, unit_id, valid_from DESC);
+CREATE INDEX ON aiqg.org_member (tenant_id, unit_id, valid_from DESC);
 ```
 
-- **Effective membership at time t** = the newest row with `valid_from ≤ t` for that `(member_kind, member_key)`. Back-dating is allowed (an admin can say "since 1 Oct"); it is itself a new row, so the history of what was believed when is kept.
-- **Single primary (D4):** one unit per member at any instant, so per-unit sums equal the tenant total. Secondary memberships are out of scope for v1.
-- **Precedence when several members match one event** (a person on team A using a token assigned to team B): `person` > `user_key` > `agent` > `token` > `source_app` > `repo`. The UI shows which member decided.
-- **Audit:** every write appends to `aiqg.audit_log` (`org.unit.created|renamed|archived`, `org.member.set`, `org.function.set`) **in the same transaction**; if the audit insert fails the write fails. This is stricter than the current best-effort `sdlc.workflow.renamed`.
-- **Archiving** a unit never deletes rows; members of an archived unit roll up to its parent in reports.
+- **Effective membership at time t** for a `(member, unit)` pair = its newest row with `valid_from ≤ t`; the member is in the unit if that row's `op` is `add`, in the role it names. A person can be in many orgs and many teams at once.
+- **Back-dating** is allowed ("since 1 Oct"); it is itself a new row, so the history of what was believed when is kept.
+- **Org membership is implied by team membership**, as on GitHub: adding a person to a team makes them an org `member` if they were not one. Removing them from the org removes them from its teams.
+- **Child teams** inherit nothing in data terms: a child team's members are not direct members of the parent, but the parent's rollup includes the child's (as GitHub's child teams inherit access but not membership).
+- **Archiving** a unit never deletes rows; an archived team rolls up to its parent (or its org).
+- **Roles** (D6):
+
+| Role | On | May |
+|---|---|---|
+| `owner` | org | everything in the org: teams, members, roles, targets, token placement; receives forwarded org-level issues |
+| `manager` | org | same as owner except changing owners |
+| `manager` | team | team membership, the team's targets, placing tokens in the team; receives forwarded team issues |
+| `member` | org or team | appears in rollups; sees the unit's Home view |
+| `aiqg-admin` (realm role, existing) | tenant | everything in every org; is the tenant owner (the CEO view) |
+
+- **An org must have at least one owner.** A write that would remove the last owner is refused (same rule as the existing last-admin guard). A team without a manager forwards to its org's owners and is flagged "no manager" in Settings.
+- **Audit:** every write appends to `aiqg.audit_log` (`org.unit.created|renamed|moved|archived`, `org.member.added|removed|role_changed`, `org.token.placed`, `org.target.set`, `org.workflow_owner.set`) **in the same transaction**; if the audit insert fails the write fails. This is stricter than the current best-effort `sdlc.workflow.renamed`.
+
+### 5.2 Token placement: the org pays (D5)
+
+```sql
+-- Which org (and optionally team) a token's traffic bills to, from when. Append-only.
+CREATE TABLE aiqg.token_placement (
+  id          BIGSERIAL PRIMARY KEY,
+  tenant_id   UUID NOT NULL,
+  token_id    UUID NOT NULL REFERENCES aiqg.token(id),
+  org_id      UUID REFERENCES aiqg.org_unit(id),   -- NULL = personal token: bills to the owner's personal scope
+  team_id     UUID REFERENCES aiqg.org_unit(id),   -- must be a team of org_id; NULL = "(no team)" / default-team fallback
+  valid_from  TIMESTAMPTZ NOT NULL,
+  set_by      TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON aiqg.token_placement (tenant_id, token_id, valid_from DESC);
+
+-- A person's default team per org: where their traffic on an org token with no team is reported.
+CREATE TABLE aiqg.person_default_team (
+  id          BIGSERIAL PRIMARY KEY,
+  tenant_id   UUID NOT NULL,
+  person_sub  TEXT NOT NULL,
+  org_id      UUID NOT NULL REFERENCES aiqg.org_unit(id),
+  team_id     UUID REFERENCES aiqg.org_unit(id),   -- NULL = cleared
+  valid_from  TIMESTAMPTZ NOT NULL,
+  set_by      TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+- **A token is placed in exactly one org (or personal) at any instant**, optionally one team. This is what makes Billed totals add up to the invoice despite many-to-many people.
+- **Issuing a token** now asks for the org (default: the issuer's only org, else required) and optionally a team. The issuer must be a member of that org; placing into a team requires being its manager or an org owner/manager. "Personal" is always available to the issuer.
+- **Migration for existing tokens:** create one default org per tenant (`is_default = true`, named after the tenant, owner = the tenant's `aiqg-admin` users) and place every existing token in it from `valid_from = '-infinity'`. Owners then move tokens; a move back-dated to the token's creation re-attributes all of its history.
+- **Report-under resolution** for one event, at the event's time:
+
+```
+org    = token_placement.org_id                  (NULL → personal scope of owner_sub)
+team   = token_placement.team_id
+         else person_default_team(resolved_person, org)
+         else '(no team)'
+```
+
+- **Agents, apps and repos** (`member_kind` agent / source_app / repo) are team members so that work with no known human, and proposals (§7), still land somewhere in the Involving view. They never decide billing.
+
+### 5.3 Example: TAS's own tenant (seed for dogfooding)
+
+The first tenant to use this is our own. One org, one engineering team, and a child team per top-level product, with each product's repos as members (which also feeds the `repo_majority` proposer in §7):
+
+```
+TAS                                   org     owner: John
+└── Engineering                       team    manager: John
+    ├── LLM Router                    team    repos: tas-llm-router, llm-invocation, Gatekeeper
+    ├── AIQG                          team    repos: aiqg-dashboard-be, aiqg-ui, aiqg-import, tas-spark-jobs, tas-aiqg, aiqg-analysis
+    ├── MCP                           team    repos: tas-mcp, tas-mcp-servers
+    ├── Aether                        team    repos: aether, aether-be
+    ├── Document processing           team    repos: audimodal, deeplake-api
+    ├── Agents & workflows            team    repos: tas-agent-builder, tas-workflow-builder
+    └── Platform                      team    repos: aether-shared, shared-monitoring, deploy, tas-claude
+```
+
+Because the tenant holds one org, Home (D7) opens one level down on the product teams. Tokens are placed per product team (for example the Claude Code dogfood token from Plan #18 under Engineering, the demo-traffic tokens under AIQG). The product list is a starting point for John to edit in Settings, not a fixed seed in code.
 
 ---
 
-## 6. What it served: workflow → business function
+## 6. What it served: workflow → owner
 
 ```sql
-CREATE TABLE aiqg.workflow_function (
+CREATE TABLE aiqg.workflow_owner (
   id           BIGSERIAL PRIMARY KEY,
   tenant_id    UUID NOT NULL,
   workflow_id  TEXT NOT NULL,          -- sdlc_workflow.workflow_id
-  unit_id      UUID REFERENCES aiqg.org_unit(id),   -- kind='function'; NULL = cleared
-  source       TEXT NOT NULL CHECK (source IN ('admin','proposal_accepted')),
+  unit_id      UUID REFERENCES aiqg.org_unit(id),   -- an org or a team; NULL = cleared
+  source       TEXT NOT NULL CHECK (source IN ('admin','owner','proposal_accepted')),
   set_by       TEXT NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -219,19 +343,19 @@ CREATE TABLE aiqg.workflow_function (
 
 Same shape as `sdlc_workflow_name`: append-only, newest wins, keyed on `workflow_id` so it survives a relink (the linker rebuilds `sdlc_workflow` whole). A workflow whose id changes on relink (`W-` → `T-` once a ticket appears) loses its assignment; the proposer (§7) re-proposes from the old row's evidence.
 
-Gateway requests not linked to any workflow have no *what-it-served* value; reports show them as "no workflow", not as the actor's unit.
+Gateway requests not linked to any workflow have no *served* value; reports show them as "no workflow", not as the actor's unit.
 
 ---
 
 ## 7. Infer, then confirm
 
-The proposer suggests; only an admin decides. The pattern follows AIQG-71 (inferred session names) and the two are built on the same table.
+The proposer suggests; only an owner, manager or admin decides. The pattern follows AIQG-71 (inferred session names) and the two are built on the same table.
 
 ```sql
 CREATE TABLE aiqg.org_proposal (
   id           BIGSERIAL PRIMARY KEY,
   tenant_id    UUID NOT NULL,
-  target_kind  TEXT NOT NULL,          -- a member_kind, or 'workflow'
+  target_kind  TEXT NOT NULL,          -- a member_kind, 'token' (placement), or 'workflow'
   target_key   TEXT NOT NULL,
   unit_id      UUID REFERENCES aiqg.org_unit(id),
   rule         TEXT NOT NULL,          -- which rule proposed it
@@ -244,110 +368,257 @@ CREATE TABLE aiqg.org_proposal (
 );
 ```
 
-**Rules, first match wins per target:**
+**Rules.** With many-to-many membership a target can receive several proposals; each is accepted or rejected on its own.
 
 | Rule | Proposes | Confidence |
 |---|---|---|
-| `repo_majority` | a person's unit = the unit owning ≥70% of the repos they touched in 30 days | medium |
-| `ticket_prefix` | a workflow's function from its ticket prefix, via a **per-tenant prefix → function map** (replaces the hard-coded regex at `workflows.go:48`) | high |
-| `token_label` | a token's unit from `label`/`source_app` matching a unit name | medium |
-| `co_actor` | an agent's unit = the unit of the person who owns ≥80% of its requests | medium |
-| `seed_aether_department` | a person's unit from Aether `MEMBER_OF.department` (optional, one-shot import) | low |
-| `seed_keycloak_group` | a person's unit from Keycloak group membership (optional, one-shot import) | low |
+| `repo_team` | a person joins each team owning ≥30% of the repos they touched in 30 days | medium |
+| `ticket_prefix` | a workflow's owner from its ticket prefix, via a **per-tenant prefix → unit map** (replaces the hard-coded regex at `workflows.go:48`) | high |
+| `token_label` | a token's placement from `label`/`source_app` matching a unit name or slug | medium |
+| `token_owner_team` | a token's team = the owner's team, when the owner is in exactly one team of the token's org | medium |
+| `co_actor` | an agent joins the team of the person who owns ≥80% of its requests | medium |
+| `seed_aether_department` | a person's team from Aether `MEMBER_OF.department` (optional, one-shot import) | low |
+| `seed_keycloak_group` | a person's team from Keycloak group membership (optional, one-shot import) | low |
 
-Accepting a proposal writes an `org_member` / `workflow_function` row with `source='proposal_accepted'` and the proposal id in the audit metadata. Rejected proposals are not re-raised for the same evidence. Proposals run nightly and on demand.
+Accepting a proposal writes the corresponding row (`org_member`, `token_placement`, `workflow_owner`) with `source='proposal_accepted'` and the proposal id in the audit metadata. Rejected proposals are not re-raised for the same evidence. Proposals run nightly and on demand, and are shown to the owner or manager of the proposed unit, not only to admins.
 
 ---
 
-## 8. Rollups
+## 8. Targets, status and "needs your attention" (D8)
+
+### 8.1 Targets
+
+```sql
+-- What an owner says "good" looks like for their unit. Append-only; newest per (unit, metric) wins.
+CREATE TABLE aiqg.org_target (
+  id          BIGSERIAL PRIMARY KEY,
+  tenant_id   UUID NOT NULL,
+  unit_id     UUID NOT NULL REFERENCES aiqg.org_unit(id),
+  metric      TEXT NOT NULL CHECK (metric IN
+              ('spend','speed','quality','data_safety','uptime','overall')),
+  comparator  TEXT NOT NULL CHECK (comparator IN ('max','min')),
+  threshold   NUMERIC,               -- NULL = target cleared
+  period      TEXT NOT NULL CHECK (period IN ('day','week','month')),
+  set_by      TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+| Home name | CLEAR | Measured as | Typical target |
+|---|---|---|---|
+| Spend | C (`clear_cost`) | USD in the period | max $ per month (a budget) |
+| Speed | L (`clear_latency`) | p95 latency, and the CLEAR score | max p95 seconds |
+| Quality | E (`clear_efficacy`) | CLEAR efficacy (judged floor) | min score |
+| Data safety | A (`clear_assurance`) | policy hits / sensitive-data findings | max 0 leaks |
+| Uptime | R (`clear_reliability`) | success rate | min % |
+| Overall | composite (`clear_composite`) | composite score | min score |
+
+- **Status:** red = the unit missed its target in the current period (or is projected to, for Spend, at the current run rate); amber = within 10% of missing; green = meeting it; **no target = no colour**, the number alone. A unit inherits its parent's target only if the owner turns that on; the default is no inheritance, so a team is never red against a number nobody gave it.
+- A Spend target can later back a Spend Governor budget on the same unit (`SPEND_GOVERNOR_DESIGN.md` §2.1); in this plan it only reports.
+- **Quality caveat:** CLEAR Efficacy does not detect incorrect answers well (see `project_aiqg_efficacy_saturation`); a Quality status is only as good as the judged floor behind it, and Home says so on hover.
+
+### 8.2 Needs your attention
+
+The top of Home is a short list (at most five) of units in the viewer's scope that are **red**, ranked by impact:
+
+| Metric | Impact |
+|---|---|
+| Spend | dollars over budget (or projected over) |
+| Quality, Speed, Uptime | shortfall × requests affected |
+| Data safety | count of leaks × severity of the data type |
+
+Each item names the unit, says what is wrong in one sentence, names the owner, and offers **Drill in** and **Forward** (§9.3). An item already forwarded shows its follow-up state instead of a second Forward button.
+
+---
+
+## 9. Rollups, Forward, Ask
+
+### 9.1 Rollups
 
 Raw events age out at 90 days, so per-unit history must be materialized before that.
 
-- **New continuous aggregate** `aiqg.event_metrics_actor_1h`, grouped by `(bucket, tenant_id, owner_sub, user_id, agent_id, token_id, source_app, workflow, vendor, model)` with request count, tokens, cost and CLEAR sums. Kept indefinitely, like the other rollups. Membership is **not** baked in.
-- **Unit resolution at query time:** join the aggregate to effective `org_member` rows by bucket time, apply §5 precedence, then roll up the unit tree. A membership fix therefore re-attributes all history, including history older than 90 days.
-- **Activity mix** comes from `sdlc_label` via `sdlc_turn.actor_sub`; **workflows** from `sdlc_workflow` (actor axis: workflows a unit's people touched; served axis: workflows assigned to a function).
-- **Cardinality check before building:** `user_id` is caller-set and unbounded. The aggregate drops `user_id` values that occur in fewer than N requests per hour into `'(other)'` if the row count measured in staging exceeds budget. Measure first.
+- **New continuous aggregate** `aiqg.event_metrics_actor_1h`, grouped by `(bucket, tenant_id, token_id, owner_sub, user_id, agent_id, source_app, workflow, vendor, model)` with request count, tokens, cost, latency sums and CLEAR sums. Kept indefinitely, like the other rollups. **Placement and membership are not baked in.**
+- **Resolution at query time:** join the aggregate to effective `token_placement` (Billed, Reported-under), `org_member` (Involving) or `workflow_owner` (Served) rows by bucket time, then roll up the tree. Moving a token or a person therefore re-attributes all history, including history older than 90 days.
+- **Activity mix** comes from `sdlc_label` via `sdlc_turn.actor_sub`; **workflows** from `sdlc_workflow`.
+- **Cardinality check before building:** `user_id` is caller-set and unbounded. The aggregate folds `user_id` values that occur in fewer than N requests per hour into `'(other)'` if the row count measured in staging exceeds budget. Measure first.
+- **Data safety by app and data type** needs a new query: exposure today is tenant-wide counts by pattern (`QueryTagCounts`); the per-unit view groups `event_metrics.tags` by `source_app` and token placement. Whether `tags` carries enough to name the data type per event must be checked before P4 (§14).
 
-`GET /api/v1/metrics/units?axis=actor|served&from&to&unit_id` returns per-unit cost, requests, tokens, CLEAR, activity mix and workflow counts, with an `unattributed` row so totals reconcile to the tenant.
+### 9.2 Home summary
+
+One endpoint serves Home so the page makes one call: `GET /api/v1/home?scope=<unit_id|tenant>&period=` returns the needs-attention list, one card per child unit (owner, spend + trend, the five scores, status per target), and the six top-5 tables. The tables rank **orgs, teams, apps or workflows** (switch), ordered by needs-attention (worst against target first) or best. Person rows appear only for viewers allowed by D11.
+
+### 9.3 Forward and Follow-ups (D9)
+
+```sql
+CREATE TABLE aiqg.followup (
+  id            UUID PRIMARY KEY,
+  tenant_id     UUID NOT NULL,
+  unit_id       UUID NOT NULL REFERENCES aiqg.org_unit(id),
+  metric        TEXT NOT NULL,               -- as org_target.metric, or 'other'
+  title         TEXT NOT NULL,               -- the one-sentence issue
+  snapshot_id   UUID NOT NULL REFERENCES aiqg.report_snapshot(id),  -- frozen numbers
+  to_sub        TEXT NOT NULL,               -- the unit's manager or owner
+  cc_subs       TEXT[] NOT NULL DEFAULT '{}',
+  note          TEXT NOT NULL DEFAULT '',
+  reply_by      DATE,
+  created_by    TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- State changes and replies. Append-only; current state = newest row.
+CREATE TABLE aiqg.followup_event (
+  id           BIGSERIAL PRIMARY KEY,
+  followup_id  UUID NOT NULL REFERENCES aiqg.followup(id),
+  state        TEXT CHECK (state IN ('open','acknowledged','resolved','closed')),
+  comment      TEXT,
+  by_sub       TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+- **Forward** defaults To = the unit's manager (else owner), Cc = the parent org's owner, and freezes the drilled view into `report_snapshot` so the manager sees the same numbers the executive saw. The snapshot body gains a `kind: "home_drill"` and its scope; existing report snapshots are unaffected.
+- The recipient gets an email through the existing mail worker, with a link to the follow-up, and sees it in **Follow-ups** (header link, with a count of open items). States: open → acknowledged → resolved (by the recipient) → closed (by the sender). Overdue items (past `reply_by`) are flagged on the sender's Home.
+- A follow-up also links to the **live** view, labelled as live, so the manager can see whether the numbers have moved since.
+
+### 9.4 ✦ Ask (D10)
+
+- **Backend:** the Plan #20 data MCP server (`cmd/data-mcp`) is the tool layer. The dashboard backend runs the model loop, calling the model **through our own gateway** with a tenant-internal token placed in the tenant's default org (so Ask's own cost shows up, honestly, on Home). The MCP tools are called with a token scoped to the viewer's tenant.
+- **Viewer scoping:** the dashboard passes the viewer's scope (the units D7 gives them, and D11's person rule) into every tool call as a filter; a viewer cannot ask their way into a unit or person view their Home would not show. Tenant isolation is still enforced by the `aiqg_mcp` views, independently.
+- **Provenance:** every answer lists the tools called, their arguments (time window, filters) and row counts under "How I got this". No answer without at least one tool call; if the tools cannot answer, Ask says which data is missing rather than guessing.
+- **Actions on an answer:** Pin to Home (`aiqg.home_pin`: viewer, question, tool calls, chart spec), Show as view (opens the same query as a table/chart), Forward (§9.3, snapshotting the answer).
+- **Tools needed beyond Plan #20 Phase 1** (`usage_timeseries`, `cost_breakdown`): quality/CLEAR by unit, data exposure by app and data type, follow-up list, and unit tree. These are Plan #20 Phase 1 work, built here as the first consumer.
 
 ---
 
-## 9. API (aiqg-dashboard-be)
+## 10. API (aiqg-dashboard-be)
 
 | Method | Path | Gate |
 |---|---|---|
-| GET | `/api/v1/org/units` | tenant user |
-| POST / PATCH | `/api/v1/org/units[/:id]` | `aiqg-admin` |
-| GET | `/api/v1/org/members?kind=&unit_id=` | tenant user |
-| PUT | `/api/v1/org/members/:kind/:key` `{unit_id, valid_from}` | `aiqg-admin` |
-| PUT | `/api/v1/sdlc/workflows/:id/function` | `aiqg-admin` |
-| GET | `/api/v1/org/proposals?status=open` | `aiqg-admin` |
-| POST | `/api/v1/org/proposals/:id/accept` \| `reject` | `aiqg-admin` |
-| GET | `/api/v1/metrics/units` | tenant user |
-| GET | `/api/v1/org/actors/unassigned` | `aiqg-admin` — actors seen in the window with no membership |
+| GET | `/api/v1/org/units` (tree) | tenant user |
+| POST / PATCH | `/api/v1/org/units[/:id]` | `aiqg-admin`; org owner/manager for teams in their org |
+| GET | `/api/v1/org/units/:id/members` | tenant user |
+| PUT / DELETE | `/api/v1/org/units/:id/members/:kind/:key` `{role, valid_from}` | org owner/manager; team manager for their team |
+| PUT | `/api/v1/tokens/:id/placement` `{org_id, team_id, valid_from}` | org owner/manager; team manager into their team |
+| PUT | `/api/v1/org/people/:sub/default-team` `{org_id, team_id}` | the person, or an org owner/manager |
+| PUT | `/api/v1/org/units/:id/targets/:metric` | owner/manager of the unit |
+| PUT | `/api/v1/sdlc/workflows/:id/owner` | `aiqg-admin`, or owner/manager of the target unit |
+| GET | `/api/v1/org/proposals?status=open` | owner/manager of the proposed unit; `aiqg-admin` |
+| POST | `/api/v1/org/proposals/:id/accept` \| `reject` | same |
+| GET | `/api/v1/org/actors/unassigned` | `aiqg-admin`, org owners — people, tokens, agents seen with no membership/placement |
+| GET | `/api/v1/me/scope` | tenant user — the units the caller owns or manages (drives D7) |
+| GET | `/api/v1/home?scope=&period=` | tenant user (D11 applied) |
+| GET | `/api/v1/metrics/units?view=billed\|reported\|involving\|served` | tenant user (D11 applied) |
+| GET / POST | `/api/v1/followups` | tenant user (lists those to, cc or by the caller; admins all) |
+| POST | `/api/v1/followups/:id/events` | recipient, cc or sender |
+| POST | `/api/v1/ask` (streamed) | tenant user, viewer-scoped |
+| GET / POST / DELETE | `/api/v1/home/pins` | the viewer |
 
-Every write is tenant-scoped from the JWT and audited fail-closed (§5).
+Every write is tenant-scoped from the JWT and audited fail-closed (§5.1). The `/admin/users` fix (F1) is a precondition for every member picker.
 
 ---
 
-## 10. UI (aiqg-ui)
+## 11. UI (aiqg-ui)
 
-- **Settings ▸ Organization**: unit tree editor; member assignment with a "since" date; an **Unassigned** list (people, tokens, agents seen recently with no unit, ordered by cost); the proposal queue with accept/reject.
-- **Unit filter** in Traffic Explorer and Engineering (Sessions, Workflows), and a **function** column on workflows.
-- **Reports ▸ By unit**: actor axis and served axis as two tabs, never one blended chart; an "unattributed" row always shown.
+The wireframe is the reference: <https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb>.
+
+### 11.1 Home replaces the current landing page
+
+- **No left-hand navigation** (D12). Home keeps today's clean, full-width layout and the existing banners (spend cap, exposure). The header carries the scope ("Acme · all orgs · you are tenant owner"), a period switch, **Follow-ups (n)** and **✦ Ask**. Live Monitor, Traffic Explorer, Governance and Reports stay reachable from the app header exactly as today; Home no longer shows them as cards.
+- **Order on the page:** Needs your attention (§8.2) → one card per org (or per team when the scope is one org): owner, spend with a trend line, Quality / Speed / Data safety / Uptime, status pills against targets → six top-5 tables (Spend, Speed, Quality, Data safety, Uptime, Overall) with the rank switch (orgs / teams / apps / workflows) and order switch (needs attention / best).
+- **Drill in place:** clicking a card, row or issue re-scopes Home to that unit (breadcrumb: Acme › Sales › Demo › its apps and workflows). No page change, back button works. Owners and managers additionally see "Open in Traffic Explorer" pre-filtered to the unit; executives are not sent there by default.
+- **Plain names** with the CLEAR letter on hover (D12). Every red/amber says which target it missed.
+- **Phone-friendly:** cards stack, tables become top-3 lists with "more", Ask is full-screen. Executives read this on a phone.
+
+### 11.2 Other surfaces
+
+- **Follow-ups** page: To me / From me / Cc; state, reply-by, snapshot vs live.
+- **✦ Ask** panel: question box, suggested questions for the current scope, answer as text + table/chart, "How I got this", Pin / Show as view / Forward.
+- **Settings ▸ Organization**: org and team tree editor (nesting by drag), members with roles and a "since" date, token placement, default team, targets per unit, the **Unassigned** list (ordered by cost), and the proposal queue. Org owners see their orgs; admins see all.
+- **Token issue dialog** gains Org (required, or Personal) and Team (optional).
+- **Unit filter** in Traffic Explorer and Engineering (Sessions, Workflows), and an owner column on workflows.
 - Labels: "session" for `conversation_id`, "run" for `flow_id`, "workload type" for the router `workflow` column.
 
+### 11.3 Weekly digest (proposed, not yet decided)
+
+The same "Needs your attention" list and org cards, emailed weekly to owners through the existing `digest_subscription` and digest worker, with Forward links. Executives often live in email; the data and the rendering are the Home endpoint's, so it costs one template.
+
 ---
 
-## 11. Privacy & security
+## 12. Privacy & security
 
 - `owner_sub` and `owner_email` are personal data. Email is stored on the token row only (for display); events carry `owner_sub` only.
-- Baggage `user.id` stays pseudonymous (attribution doc rule); mapping it to a person is an admin act recorded in `org_member`.
-- Per-person rollups are visible to tenant users by default. Whether a non-admin may see *other* people's cost is a per-tenant setting (`org_person_visibility: admins | everyone`, default `admins`).
+- Baggage `user.id` stays pseudonymous (attribution doc rule); mapping it to a person is an owner/admin act recorded in `org_member`.
+- **Person-level rankings and costs** (D11) are visible to owners and managers of a unit containing the person, and to admins, by default. Tenant setting `org_person_visibility: managers | everyone`, default `managers`. A person always sees their own.
+- **Ask** never returns what the viewer's Home would not show (§9.4); questions and answers are logged with the viewer's `sub` for audit, and answers store ids and aggregates, not prompt text.
+- **Follow-up notes** are free text written by the sender; they are not sent to the model and not indexed.
 - No text is stored by the proposer; evidence is ids and counts.
-- Two admin-surface gaps found during this survey are in scope as phase **P2a** (§12), because §9 and §10 build on the same admin surface:
+- Two admin-surface gaps found during this survey are in scope as phase **P2a** (§13), because §10 and §11 build on the same admin surface:
 
 | # | Finding | Cite (aiqg-dashboard-be, `origin/main` `c687e1c`) | Why it blocks this plan | Fix |
 |---|---|---|---|---|
-| F1 | `GET /admin/users` lists **every user in the realm**, with no tenant filter. It is admin-gated, but `aiqg-admin` is a realm role, so an admin of one tenant sees the users of every tenant. Harmless while John is the only tenant admin; a cross-tenant exposure once a second tenant has one. | `internal/handlers/admin.go:109-166` (`listUsers`); `internal/keycloak/admin.go` `ListUsers` | The §10 member picker and the Unassigned list need a user list; reusing this one would show other tenants' people in a tenant's org tree. | Filter on the Keycloak user attribute `tenant_id` (already read for auditors, `internal/keycloak/admin.go:62-70`) to the caller's JWT tenant; a platform-wide list only for a separate platform-operator role. Test: two tenants, an admin of A sees none of B. |
+| F1 | `GET /admin/users` lists **every user in the realm**, with no tenant filter. It is admin-gated, but `aiqg-admin` is a realm role, so an admin of one tenant sees the users of every tenant. Harmless while John is the only tenant admin; a cross-tenant exposure once a second tenant has one. | `internal/handlers/admin.go:109-166` (`listUsers`); `internal/keycloak/admin.go` `ListUsers` | The member picker, Forward's To/Cc and the Unassigned list need a user list; reusing this one would show other tenants' people in a tenant's org tree. | Filter on the Keycloak user attribute `tenant_id` (already read for auditors, `internal/keycloak/admin.go:62-70`) to the caller's JWT tenant; a platform-wide list only for a separate platform-operator role. Test: two tenants, an admin of A sees none of B. |
 | F2 | Realm-role **grant and revoke are written to zap logs only**, not to `aiqg.audit_log`. The SDLC auditor grant/revoke *is* audited (`sdlc_auditors.go:256,282`), so the two admin paths disagree. | `internal/handlers/admin.go:191,244` | §5 requires every org write to be audited fail-closed; admin *role* changes decide who may make those writes, so leaving them unaudited makes the org audit trail incomplete at its root. Logs also age out (Loki 30 days). | Append `admin.role.granted` / `admin.role.revoked` (actor, target sub, role, tenant) to `audit_log` in the same request, fail-closed like §5; document both actions in `audit-log-entry.md`. |
 
 ---
 
-## 12. Phasing
+## 13. Phasing
 
 | Phase | Scope | Repos | Ships independently? |
 |---|---|---|---|
 | **P0** | this document; backlog corrections from §3 | aether-shared | yes |
 | **P1 Record who** | §4.3: token owner + backfill, validate fields, response-event token id + owner, Timescale columns, import uploader, `sdlc_turn.actor_sub` | be, router, aether-shared, aiqg-import | yes — "who sent this" works on the existing events API |
-| **P2a Admin-surface fixes** | §11 F1 (tenant-filter `/admin/users`) and F2 (audit role grant/revoke, fail-closed) | be, aether-shared (`audit-log-entry.md`) | yes — security fixes, independent of the rest; must land before P5 exposes the member picker |
-| **P2 Structure** | §5, §6 tables + §9 CRUD + fail-closed audit | be | yes (admin API only) |
+| **P2a Admin-surface fixes** | §12 F1 (tenant-filter `/admin/users`) and F2 (audit role grant/revoke, fail-closed) | be, aether-shared (`audit-log-entry.md`) | yes — security fixes; must land before any member picker ships |
+| **P2 Structure** | §5 tables, roles, token placement + default-org migration, §6, §10 CRUD, fail-closed audit; seed the TAS tenant (§5.3) by hand through the API | be | yes (API only) |
 | **P3 Infer/confirm** | §7 proposer + per-tenant ticket-prefix map; AIQG-71 on the same machinery | be | after P2 |
-| **P4 Rollups** | §8 aggregate (cardinality measured first) + `/metrics/units` | aether-shared, be | after P1, P2 |
-| **P5 UI** | §10 | ui | after P2-P4 |
-| **P6 Close-out** | model docs (`token.md`, `response-event.md`, `request-event.md`), backlog + artifact | aether-shared | — |
+| **P4 Rollups + targets** | §9.1 aggregate (cardinality measured first), §8 targets and status, `/home`, `/metrics/units`, data-safety-by-app query | aether-shared, be | after P1, P2 |
+| **P5 Home + Settings** | §11.1 new Home (replaces `HomePage.tsx`), §11.2 Settings ▸ Organization, token dialog, unit filters | ui | after P2-P4 |
+| **P6 Forward + Follow-ups** | §9.3 tables, email, Follow-ups page; §11.3 weekly digest if agreed | be, ui | after P5 |
+| **P7 ✦ Ask** | §9.4: the extra Plan #20 tools, the model loop through our gateway, viewer scoping, provenance, pins | be (data-mcp + dashboard), ui | after P4; depends on Plan #20 Phase 1 |
+| **P8 Recommended actions** (future) | §14.1 | be, ui, router | after P4, P6 |
+| **P9 Close-out** | model docs (`token.md`, `response-event.md`, `request-event.md`, `audit-log-entry.md`), backlog + artifact | aether-shared | — |
 
 **Plan #11 Phase 2** (Keycloak `sub` → gateway `user_id`) is satisfied by P1: the token owner *is* the Keycloak `sub` on the event, with no Neo4j lookup. `/me/usage` filters on `owner_sub = jwt.sub OR mapped user_key`.
 
 **Verification for P1:** issue a token, send one request with and one without `baggage: user.id=…`, and confirm in Timescale and Loki that both events carry `token_id` and `owner_sub`, and only the second carries `user_id`. Confirm the backfill count equals the number of `token.issued` rows whose token still exists.
 
----
-
-## 13. Open questions
-
-1. **D4** — confirm single-primary, effective-dated membership.
-2. Should a tenant be able to require **per-person tokens** (refuse a shared token without baggage `user.id`)? Not in v1.
-3. `kind` values: is `function | team | group` enough, or should kinds be tenant-defined?
-4. Do the six fixed member kinds cover agent-builder agents and MCP servers, or does an MCP server need its own kind?
-5. `user_id` cardinality budget for §8 — measure on current traffic before choosing N.
+**Verification for P2/P4:** on the TAS tenant, Billed totals for the period equal the tenant total to the cent; a person in two teams appears in both under Involving and once under Reported-under; moving a token to another team back-dated to its creation moves its whole history in one refresh.
 
 ---
 
-## 14. Related documentation
+## 14. Future work and open questions
+
+### 14.1 Recommended actions at the owner level (future, P8)
+
+Home will eventually say not only *what* is wrong but *what to try*, addressed to the unit's owner and tied to the target it would fix. Each recommendation carries its evidence, the expected effect on the target, and a way to apply it that starts in **observe** mode (an `aiqg.route_rule` or a per-unit config change that is measured before it is enforced), approved by the owner.
+
+| Recommendation | When | Builds on |
+|---|---|---|
+| **Evaluate a cheaper model** | Spend is red and the workload has a cheaper model proven to hold quality for it | Workload Model Fit (merged 2026-09-12), expected-cost routing |
+| **Use a more capable model** | Quality is red and the judge attributes the shortfall to the model, not the prompt | judged quality floor; routing quality gate |
+| **Raise output/window limits** | answers are being cut off: a high share of responses end at `max_tokens` or the context window (`finish_reason = length`), losing output the caller paid for; the earlier routing measurements found 47% truncation on some traffic | per-route/per-unit dynamic configuration of `max_tokens` and context settings |
+| **Turn on caching or reduction** | repeated prompts or large static context on a unit's traffic | response cache, prompt-cache control, payload reduction |
+| **Tighten a policy** | Data safety is red under a log-only bundle | policy bundles (redact once the gateway enforces) |
+
+Dynamic configuration (options such as window sizes, `max_tokens`, cache and reduction settings, set per unit or per workload and changeable without a deploy) is the mechanism most of these need; it is its own design and is out of scope here beyond reserving the "apply" action.
+
+### 14.2 Open questions
+
+1. Should a tenant be able to require **per-person tokens** (refuse a shared token without baggage `user.id`)? Not in v1.
+2. Do the member kinds cover agent-builder agents and MCP servers, or does an MCP server need its own kind?
+3. `user_id` cardinality budget for §9.1 — measure on current traffic before choosing N.
+4. Does `event_metrics.tags` carry the data type per event well enough for "what type of data is leaking, by app"? Check before P4; if not, the router must emit the matched pattern's category.
+5. Should targets inherit from parent units by default? Proposed: no (§8.1).
+6. Weekly digest (§11.3): agree before P6.
+7. Who may create orgs: only `aiqg-admin` (proposed), or any tenant user (GitHub lets anyone create an org)?
+
+---
+
+## 15. Related documentation
 
 - `tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md` — identity ladder, header contract, `AgentContext`
 - `tas-session-corpus/docs/DESIGN-continuous-labeling.md` §8.3-8.8 — units, `flow_id` is not a workflow key, Claude Code headers
 - `tas-session-corpus/docs/LABELS.md` — turn and task definitions
 - [activity-reporting-and-onboarding.md](./activity-reporting-and-onboarding.md) — Plan #15, dashboard user vs gateway user
 - [token.md](./token.md), [request-event.md](./request-event.md), [response-event.md](./response-event.md), [audit-log-entry.md](./audit-log-entry.md)
-- `SPEND_GOVERNOR_DESIGN.md` §2.1 — the Tenant → Org → Team → User budget hierarchy this model can feed
+- `SPEND_GOVERNOR_DESIGN.md` §2.1 — the Tenant → Org → Team → User hierarchy; budgets can attach to these units
+- GitHub Docs, "About organizations", "About teams" (nested teams) — the structure model D4 follows
+- Wireframe: <https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb>
