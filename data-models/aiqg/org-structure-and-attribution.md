@@ -18,7 +18,7 @@ databases:
 extends: tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md (adds the human actor; keeps its header contract and ladder)
 vocabulary_from: tas-session-corpus/docs/DESIGN-continuous-labeling.md §8.3-8.8, tas-session-corpus/docs/LABELS.md
 version: 0.1.0
-last_updated: 2026-11-18
+last_updated: 2026-11-18 (rev 2: F1/F2 added as P2a)
 status: proposed (D1-D3 decided with John 2026-11-18; D4 open)
 plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
 ```
@@ -305,7 +305,12 @@ Every write is tenant-scoped from the JWT and audited fail-closed (§5).
 - Baggage `user.id` stays pseudonymous (attribution doc rule); mapping it to a person is an admin act recorded in `org_member`.
 - Per-person rollups are visible to tenant users by default. Whether a non-admin may see *other* people's cost is a per-tenant setting (`org_person_visibility: admins | everyone`, default `admins`).
 - No text is stored by the proposer; evidence is ids and counts.
-- Prerequisite found during this survey: `GET /admin/users` lists the whole realm without a tenant filter (`internal/handlers/admin.go:109-166`). The member picker in §10 must not reuse it until it is tenant-filtered.
+- Two admin-surface gaps found during this survey are in scope as phase **P2a** (§12), because §9 and §10 build on the same admin surface:
+
+| # | Finding | Cite (aiqg-dashboard-be, `origin/main` `c687e1c`) | Why it blocks this plan | Fix |
+|---|---|---|---|---|
+| F1 | `GET /admin/users` lists **every user in the realm**, with no tenant filter. It is admin-gated, but `aiqg-admin` is a realm role, so an admin of one tenant sees the users of every tenant. Harmless while John is the only tenant admin; a cross-tenant exposure once a second tenant has one. | `internal/handlers/admin.go:109-166` (`listUsers`); `internal/keycloak/admin.go` `ListUsers` | The §10 member picker and the Unassigned list need a user list; reusing this one would show other tenants' people in a tenant's org tree. | Filter on the Keycloak user attribute `tenant_id` (already read for auditors, `internal/keycloak/admin.go:62-70`) to the caller's JWT tenant; a platform-wide list only for a separate platform-operator role. Test: two tenants, an admin of A sees none of B. |
+| F2 | Realm-role **grant and revoke are written to zap logs only**, not to `aiqg.audit_log`. The SDLC auditor grant/revoke *is* audited (`sdlc_auditors.go:256,282`), so the two admin paths disagree. | `internal/handlers/admin.go:191,244` | §5 requires every org write to be audited fail-closed; admin *role* changes decide who may make those writes, so leaving them unaudited makes the org audit trail incomplete at its root. Logs also age out (Loki 30 days). | Append `admin.role.granted` / `admin.role.revoked` (actor, target sub, role, tenant) to `audit_log` in the same request, fail-closed like §5; document both actions in `audit-log-entry.md`. |
 
 ---
 
@@ -315,6 +320,7 @@ Every write is tenant-scoped from the JWT and audited fail-closed (§5).
 |---|---|---|---|
 | **P0** | this document; backlog corrections from §3 | aether-shared | yes |
 | **P1 Record who** | §4.3: token owner + backfill, validate fields, response-event token id + owner, Timescale columns, import uploader, `sdlc_turn.actor_sub` | be, router, aether-shared, aiqg-import | yes — "who sent this" works on the existing events API |
+| **P2a Admin-surface fixes** | §11 F1 (tenant-filter `/admin/users`) and F2 (audit role grant/revoke, fail-closed) | be, aether-shared (`audit-log-entry.md`) | yes — security fixes, independent of the rest; must land before P5 exposes the member picker |
 | **P2 Structure** | §5, §6 tables + §9 CRUD + fail-closed audit | be | yes (admin API only) |
 | **P3 Infer/confirm** | §7 proposer + per-tenant ticket-prefix map; AIQG-71 on the same machinery | be | after P2 |
 | **P4 Rollups** | §8 aggregate (cardinality measured first) + `/metrics/units` | aether-shared, be | after P1, P2 |
