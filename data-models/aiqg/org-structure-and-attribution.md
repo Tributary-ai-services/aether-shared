@@ -6,10 +6,10 @@
 
 ```yaml
 service: aiqg-dashboard-be (structure model, membership, roles, targets, follow-ups, proposer, rollups, API) + tas-llm-router (token owner + baggage user on events) + aiqg-import (uploader on imported sessions) + aiqg-ui (new Home, Follow-ups, Ask, Settings ▸ Organization)
-models: OrgUnit, OrgMember, TokenPlacement, PersonDefaultTeam, WorkflowOwner, OrgTarget, OrgProposal, FollowUp, FollowUpEvent, HomePin
+models: Team (Aether, extended), TeamHistory, TeamMemberHistory, TokenPlacement, PersonDefaultTeam, WorkflowOwner, OrgTarget, OrgProposal, FollowUp, FollowUpEvent, HomePin
 databases:
-  - aiqg.org_unit (Postgres, aiqg db) — NEW: orgs and nestable teams
-  - aiqg.org_member (Postgres, aiqg db) — NEW, append-only, effective-dated, many-to-many, carries the role
+  - Aether Team (Neo4j, aether-be) — EXTENDED: nesting, slug, archive, joining, change events (source of truth for teams)
+  - aiqg.team_history, aiqg.team_member_history (Postgres, aiqg db) — NEW, append-only copy projected from Aether's change events
   - aiqg.token_placement (Postgres, aiqg db) — NEW, append-only: which team a token reports under (the org is the token's tenant)
   - aiqg.account (Postgres) — EXTENDED: kind, aether_org_id, aether_tenant_id, aether_user_id (the link to Aether)
   - aiqg.person_default_team (Postgres, aiqg db) — NEW, append-only
@@ -25,9 +25,9 @@ reuses: aiqg.report_snapshot (frozen snapshot on Forward), aiqg.digest_subscript
 extends: tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md (adds the human actor; keeps its header contract and ladder)
 vocabulary_from: tas-session-corpus/docs/DESIGN-continuous-labeling.md §8.3-8.8, tas-session-corpus/docs/LABELS.md
 wireframe: https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb
-version: 0.3.0
-last_updated: 2026-11-18 (rev 4: an org IS a tenant, as in Aether; AIQG orgs link to Aether Organizations; multi-org viewer. rev 3: GitHub-style many-to-many structure, owners + targets, executive Home, Forward + Follow-ups, Ask)
-status: proposed (D1-D13 decided with John 2026-11-18; D14 open)
+version: 0.4.0
+last_updated: 2026-11-18 (rev 5: teams are Aether's Team, extended; AIQG keeps a time-stamped copy. rev 4: an org IS a tenant, as in Aether; AIQG orgs link to Aether Organizations; multi-org viewer. rev 3: GitHub-style many-to-many structure, owners + targets, executive Home, Forward + Follow-ups, Ask)
+status: proposed (D1-D14 decided with John 2026-11-18)
 plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
 ```
 
@@ -52,7 +52,7 @@ The primary reader of Home is a CEO or CIO. They will rarely open Traffic Explor
 
 | # | Decision | Decided |
 |---|---|---|
-| D1 | **AIQG owns units and membership.** New `aiqg.org_*` tables in the aiqg database. Keycloak groups and Aether Org/Team/`department` are at most *seed sources* for proposals (§7), never the source of truth. | John, 2026-11-18 |
+| D1 | **AIQG owns units and membership.** *(Amended by D14: Aether owns orgs and teams; AIQG owns what hangs off them.)* New `aiqg.org_*` tables in the aiqg database. Keycloak groups and Aether Org/Team/`department` are at most *seed sources* for proposals (§7), never the source of truth. | John, 2026-11-18 |
 | D2 | **The human actor comes from the token, refined by baggage.** The token's owner (the Keycloak user who issued it) is the baseline identity on every event. W3C `baggage` `user.id`, sent by callers that share one token across many people, refines it. Both are stored; neither overwrites the other. | John, 2026-11-18 |
 | D3 | **Levels come from the session-corpus design, unchanged.** request < turn < task < workflow, inside a session (§2). This document adds no level. The attribution doc's `flow` is not a level, and its `agent` becomes an actor. | John, 2026-11-18 |
 | D4 | **Membership is many-to-many, like GitHub.** A person can be in any number of orgs and any number of teams. A team belongs to exactly one org and can nest under one parent team. Membership is append-only and effective-dated. *(Revised: rev 2 proposed single-primary.)* | John, 2026-11-18 |
@@ -64,7 +64,7 @@ The primary reader of Home is a CEO or CIO. They will rarely open Traffic Explor
 | D10 | **✦ Ask is scoped to the viewer and cites its sources.** Built on the Plan #20 data MCP server; model calls go through our own gateway; every answer shows how it was computed. | John, 2026-11-18 |
 | D11 | **Person-level ranking is for owners and managers only** by default (tenant setting). | John, 2026-11-18 |
 | D13 | **AIQG orgs link to Aether Organizations; the models must not drift.** Each AIQG account (tenant) records the Aether Organization or personal user it belongs to (§5.0). One org, one id, in both products. | John, 2026-11-18 |
-| D14 | **Which product is the source of truth for org membership and teams.** Recommended: Aether owns the org and its member roles (it already has them, many-to-many); AIQG owns teams, nesting, token placement, targets and follow-ups, and reads org membership from Aether. This amends D1 for the org level only. | **Open** |
+| D14 | **Aether is the source of truth for orgs, teams and membership.** Aether's existing `Team` is extended (nesting, joining, archive, change events) rather than duplicated, so agent-builder, notebooks and AIQG share one team model. AIQG keeps an append-only, time-stamped copy for attribution and owns only what is AIQG's: token placement, targets, follow-ups, workflow owners, baggage-key mappings. Amends D1. | John, 2026-11-18 |
 | D12 | **Plain language on Home.** Spend, Speed, Quality, Data safety, Uptime, Overall; the CLEAR letter is shown on hover, not as the label. **No left-hand navigation on Home**: it keeps today's clean layout, with Ask and Follow-ups in the header. | John, 2026-11-18 |
 
 ### Not this
@@ -150,6 +150,7 @@ Many-to-many membership means a person's work cannot simply be summed into every
 | Data exposure | tenant-wide counts **by pattern** from `event_metrics.tags` (`QueryTagCounts`); **no per-app split** | `internal/handlers/metrics.go:395-440` |
 | Frozen reports | `aiqg.report_snapshot`: immutable JSONB body by id, append-only | `migrations/004_report_snapshot.sql` |
 | Data MCP (Plan #20) | Phase 0 live (tenant-filtered `aiqg_mcp` views, scoped tokens); Phase 1 draft #178 has two tools, `usage_timeseries` and `cost_breakdown` | BACKLOG Plan #20 |
+| Aether teams | `Team` model, service and routes exist (`models/team.go`, `services/team.go`, `handlers/routes.go:513-526`); `Notebook.team_id`, `Agent.team_id`, prompt `shared_with_teams` exist. **Live: 0 Team nodes, and `team_id` is empty on all 41 notebooks and 23 agents.** Two code paths delete teams wholesale: org delete (`services/organization.go:520-529`) and the demo-data reset (`scripts/setup-demo-data.go:104-109`, which also deletes every org and every `MEMBER_OF`). Which one removed the earlier teams is not known; the nightly backups go back about 65 days | aether-be; Neo4j 2026-11-18 |
 | Aether orgs | `Organization` with roles `owner / admin / member / billing` on `MEMBER_OF`; a user may be in many orgs; creating an org creates its own tenant in AudiModal (`services/organization.go:83-118`). Live: one org, **TAS** (`4c4d7143…`, tenant `tenant_87f5d6f6-116a-4460-926e-f0b281966d3d`), one member (owner), **0 teams**, 2 spaces | aether-be `models/organization.go`; Neo4j 2026-11-18 |
 | Aether tenants | the space context gives exactly one tenant per scope: org → `org.TenantID`, personal → `user.PersonalTenantID`. A second path gives each `Space` node its own `tenant_<unix-seconds>` id (the TAS org's two spaces have two more ids), and older personal tenants use the same non-UUID form | `services/space_context.go:176,232,262`; `models/space.go:154` |
 | AIQG tenants | `tenant_id` is a Keycloak user attribute copied into the JWT; one `aiqg.account` row per tenant. Live: `65ea3247…` (our traffic, 631 tokens) and `a689c0b2…` (demo); 3 more users carry ids with no account row. **Neither id appears anywhere in Neo4j**: no AIQG tenant is linked to an Aether org or person | `internal/auth/keycloak.go:40-49`; `migrations/002_account.sql`; Keycloak + Postgres 2026-11-18 |
@@ -234,64 +235,78 @@ ALTER TABLE aiqg.account
 - **Our own data:** link `65ea3247…` (our traffic) to the Aether org **TAS** (`4c4d7143…`), and `a689c0b2…` (demo) to a new Aether org "AIQG Demo". The three users whose Keycloak `tenant_id` has no account row are reviewed and either linked to their personal scope or cleared.
 - **The Keycloak `tenant_id` attribute** stays the default tenant for a sign-in (§5.4) until the multi-org viewer ships; it is no longer the only tenant a person can see.
 
-### 5.1 Teams and membership
+### 5.1 Teams and membership: Aether's Team, extended (D14)
+
+**Aether owns orgs, teams and membership; AIQG keeps a time-stamped copy.** Teams already exist in Aether — `Team` with `organization_id`, `(:User)-[:MEMBER_OF {role, joined_at, invited_by}]->(:Team)` with roles `owner / admin / member / viewer`, a full CRUD + member API (`internal/handlers/routes.go:513-526`), a team page in the Aether UI, and `team_id` on `Notebook` and `Agent` and `shared_with_teams` on prompts. Extending that one model, rather than building a second, means an AIQG team *is* the team that owns an agent-builder agent or a notebook, and any service can reuse it.
+
+**Extensions to Aether's Team** (aether-be):
+
+| Change | Why |
+|---|---|
+| `(:Team)-[:CHILD_OF]->(:Team)`, at most one parent, same org, no cycles (checked on write) | nesting (D4) |
+| `(:Team)-[:BELONGS_TO]->(:Organization)` alongside the existing `organization_id` property | traversals, and the org-delete cascade can be replaced (below) |
+| `slug` (unique per org), `archived_at` | stable keys for links and history; a team is **archived, never deleted** |
+| **Joining:** a member of the org may join a team whose `visibility` is `organization` (self-join) or request to join a `private` one (approved by the team's owner/admin); `public` keeps today's meaning | "teams can be joined", as on GitHub |
+| `joined_at` settable on add (back-dating, "since 1 Oct"), by the team's owner/admin | time-correct attribution |
+| **Non-human members by property, not edge:** `Agent.team_id` (exists), plus team-owned `repos` and `source_apps` lists | the proposer (§7) and the Involving view |
+| Every change publishes an event to a new Kafka topic `aether.org.changes.v1` (`team.created / renamed / moved / archived`, `team.member.added / removed / role_changed`, `org.member.*`), keyed by org | AIQG's history copy; aether-be publishes nothing for org or team changes today |
+| **Remove the two paths that delete every team:** `deleteOrganizationInternal` `DETACH DELETE`s an org's teams (`services/organization.go:520-529`), and `scripts/setup-demo-data.go:104-109` runs `MATCH (t:Team) DELETE t` — and also deletes **every** `MEMBER_OF` edge and **every** `Organization`, not only demo ones | teams are referenced by history and billing reports; deleting them orphans both |
+
+**Role mapping.** Aether team `owner` and `admin` are what this document calls a team **manager**; `member` and `viewer` are members (`viewer` is excluded from forwarding). Org roles are Aether's `owner / admin / member / billing` (§2.3).
+
+**AIQG's copy** (aiqg-dashboard-be), written only by the event consumer, never by an AIQG API:
 
 ```sql
--- A team inside one org (= one tenant). Teams may nest under one parent team.
--- The org itself is the tenant's aiqg.account row (§5.0), not a row here.
-CREATE TABLE aiqg.org_unit (
-  id             UUID PRIMARY KEY,
-  tenant_id      UUID NOT NULL,                       -- the org
-  parent_id      UUID REFERENCES aiqg.org_unit(id),   -- NULL = top-level team in the org
-  name           TEXT NOT NULL,
-  slug           TEXT NOT NULL,                       -- stable, URL-safe; survives renames
-  aether_team_id UUID,                                -- set if mirrored to an Aether Team (D14)
-  archived_at    TIMESTAMPTZ,
-  created_by     TEXT NOT NULL,                       -- Keycloak sub
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, slug)
+-- Team state over time, projected from aether.org.changes.v1. Append-only.
+CREATE TABLE aiqg.team_history (
+  id              BIGSERIAL PRIMARY KEY,
+  tenant_id       UUID NOT NULL,      -- the org's AIQG tenant (via §5.0 link)
+  aether_team_id  UUID NOT NULL,
+  parent_team_id  UUID,               -- Aether id; NULL = top-level team
+  name            TEXT NOT NULL,
+  slug            TEXT NOT NULL,
+  archived        BOOLEAN NOT NULL DEFAULT false,
+  valid_from      TIMESTAMPTZ NOT NULL,
+  event_id        TEXT NOT NULL UNIQUE  -- idempotent replay
 );
--- A parent team must have the same tenant_id; enforced in the store layer and by trigger.
-
--- Who belongs to a unit, in what role, from when. Many-to-many. Append-only:
--- joining, leaving and a role change are each a new row.
-CREATE TABLE aiqg.org_member (
-  id           BIGSERIAL PRIMARY KEY,
-  tenant_id    UUID NOT NULL,
-  unit_id      UUID REFERENCES aiqg.org_unit(id),  -- NULL = the org itself (org-level role)
-  member_kind  TEXT NOT NULL CHECK (member_kind IN
-               ('person','user_key','agent','source_app','repo')),
-  member_key   TEXT NOT NULL,          -- sub | baggage user.id | agent id | source_app | repo short name
-  role         TEXT CHECK (role IN ('owner','admin','billing','manager','member')),  -- persons only; org: owner|admin|billing|member, team: manager|member
-  op           TEXT NOT NULL CHECK (op IN ('add','remove')),
-  valid_from   TIMESTAMPTZ NOT NULL,
-  source       TEXT NOT NULL CHECK (source IN ('admin','owner','proposal_accepted','seed')),
-  set_by       TEXT NOT NULL,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+-- Membership over time. Many-to-many. Append-only.
+CREATE TABLE aiqg.team_member_history (
+  id              BIGSERIAL PRIMARY KEY,
+  tenant_id       UUID NOT NULL,
+  aether_team_id  UUID,               -- NULL = org-level membership row
+  member_kind     TEXT NOT NULL CHECK (member_kind IN ('person','agent','user_key','source_app','repo')),
+  member_key      TEXT NOT NULL,      -- Keycloak sub | agent id | baggage user.id | source_app | repo
+  role            TEXT,               -- Aether role name, persons only
+  op              TEXT NOT NULL CHECK (op IN ('add','remove')),
+  valid_from      TIMESTAMPTZ NOT NULL,
+  event_id        TEXT NOT NULL UNIQUE
 );
-CREATE INDEX ON aiqg.org_member (tenant_id, member_kind, member_key, unit_id, valid_from DESC);
-CREATE INDEX ON aiqg.org_member (tenant_id, unit_id, valid_from DESC);
+CREATE INDEX ON aiqg.team_member_history (tenant_id, member_kind, member_key, valid_from DESC);
+CREATE INDEX ON aiqg.team_member_history (tenant_id, aether_team_id, valid_from DESC);
 ```
 
-- **Org-level rows** (`unit_id IS NULL`) exist only if D14 keeps org membership in AIQG; under the recommended answer they are read from Aether's `MEMBER_OF` instead and this table holds team rows only.
-- **Effective membership at time t** for a `(member, unit)` pair = its newest row with `valid_from ≤ t`; the member is in the unit if that row's `op` is `add`, in the role it names. A person can be in many orgs and many teams at once.
-- **Back-dating** is allowed ("since 1 Oct"); it is itself a new row, so the history of what was believed when is kept.
-- **Org membership is implied by team membership**, as on GitHub: adding a person to a team makes them an org `member` if they were not one. Removing them from the org removes them from its teams.
-- **Child teams** inherit nothing in data terms: a child team's members are not direct members of the parent, but the parent's rollup includes the child's (as GitHub's child teams inherit access but not membership).
-- **Archiving** a unit never deletes rows; an archived team rolls up to its parent (or its org).
-- **Roles** (D6):
+- **Everywhere else in this document, a "unit" or `team_id` is an Aether team id**, and an org is its AIQG tenant. The tables in §5.2, §6, §8 and §9.3 hold Aether team ids with no foreign key.
+- **Baggage `user_key` mapping** is the one membership AIQG originates (Aether has no such concept): an owner maps a pseudonymous key to a person, and AIQG writes that row directly, with `event_id = 'aiqg:<uuid>'`.
+- **People are Aether users by Keycloak `sub`.** Aether's `User.keycloak_id` joins AIQG's `owner_sub`; the consumer writes the `sub`, never the Aether user id, so events and membership use one key.
+- **Effective membership at time t** for a `(member, team)` pair = its newest row with `valid_from ≤ t`; the member is in the team if that row's `op` is `add`. A person can be in many orgs and many teams at once.
+- **First sync** backfills the current Aether state with `valid_from = joined_at` (or the team's `created_at`). A nightly reconcile compares the copy with Aether's API and reports any difference as drift (D13); it never silently overwrites.
+- **Org membership is implied by team membership**, as on GitHub: Aether adds an org `member` edge when someone joins a team in an org they are not in.
+- **Child teams**: a child team's members are not direct members of the parent, but the parent's rollup includes the child's (as GitHub's child teams inherit access but not membership).
+- **Archived teams** roll up to their parent (or the org) in reports.
+- **Who may do what** (D6):
 
 | Role | On | May |
 |---|---|---|
 | `owner` | org | everything in the org: teams, members, roles, targets, token placement; receives forwarded org-level issues |
 | `admin` | org | same as owner except changing owners |
 | `billing` | org | sees all spend in the org and sets Spend targets; no structure edits |
-| `manager` | team | team membership, the team's targets, placing tokens in the team; receives forwarded team issues |
-| `member` | org or team | appears in rollups; sees the unit's Home view |
+| `owner` / `admin` ("manager") | team | team membership and join requests, the team's targets, placing tokens in the team; receives forwarded team issues |
+| `member` | org or team | appears in rollups; sees the unit's Home view; may join `organization`-visible teams |
+| `viewer` | team | sees the team's Home view; not a forwarding target |
 | `aiqg-admin` (realm role, existing) | deployment | operator of the AIQG deployment; **not** an org role, and after the multi-org viewer ships it no longer implies seeing every org (§5.4) |
 
-- **An org must have at least one owner.** A write that would remove the last owner is refused (same rule as the existing last-admin guard). A team without a manager forwards to its org's owners and is flagged "no manager" in Settings.
-- **Audit:** every write appends to `aiqg.audit_log` (`org.unit.created|renamed|moved|archived`, `org.member.added|removed|role_changed`, `org.token.placed`, `org.target.set`, `org.workflow_owner.set`) **in the same transaction**; if the audit insert fails the write fails. This is stricter than the current best-effort `sdlc.workflow.renamed`.
+- **An org must have at least one owner** (Aether enforces it). A team without an owner/admin forwards to its org's owners and is flagged "no manager" in Settings.
+- **Audit:** structure changes are audited where they are made (aether-be); AIQG's own writes (token placement, targets, workflow owners, `user_key` mappings, follow-ups) append to `aiqg.audit_log` (`org.token.placed`, `org.target.set`, `org.workflow_owner.set`, `org.user_key.mapped`) **in the same transaction**, fail-closed. This is stricter than the current best-effort `sdlc.workflow.renamed`.
 
 ### 5.2 Token placement: the org pays (D5)
 
@@ -303,7 +318,7 @@ CREATE TABLE aiqg.token_placement (
   id          BIGSERIAL PRIMARY KEY,
   tenant_id   UUID NOT NULL,                       -- = the token's tenant
   token_id    UUID NOT NULL REFERENCES aiqg.token(id),
-  team_id     UUID REFERENCES aiqg.org_unit(id),   -- a team of that tenant; NULL = "(no team)" / default-team fallback
+  team_id     UUID                             -- Aether team id,   -- a team of that tenant; NULL = "(no team)" / default-team fallback
   valid_from  TIMESTAMPTZ NOT NULL,
   set_by      TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -316,7 +331,7 @@ CREATE TABLE aiqg.person_default_team (
   tenant_id   UUID NOT NULL,
   person_sub  TEXT NOT NULL,
   org_tenant_id UUID NOT NULL,                     -- the org (tenant) this default applies in
-  team_id     UUID REFERENCES aiqg.org_unit(id),   -- NULL = cleared
+  team_id     UUID                             -- Aether team id,   -- NULL = cleared
   valid_from  TIMESTAMPTZ NOT NULL,
   set_by      TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -374,7 +389,7 @@ CREATE TABLE aiqg.workflow_owner (
   id           BIGSERIAL PRIMARY KEY,
   tenant_id    UUID NOT NULL,
   workflow_id  TEXT NOT NULL,          -- sdlc_workflow.workflow_id
-  unit_id      UUID REFERENCES aiqg.org_unit(id),   -- an org or a team; NULL = cleared
+  unit_id      UUID                             -- Aether team id,   -- an org or a team; NULL = cleared
   source       TEXT NOT NULL CHECK (source IN ('admin','owner','proposal_accepted')),
   set_by       TEXT NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -397,7 +412,7 @@ CREATE TABLE aiqg.org_proposal (
   tenant_id    UUID NOT NULL,
   target_kind  TEXT NOT NULL,          -- a member_kind, 'token' (placement), or 'workflow'
   target_key   TEXT NOT NULL,
-  unit_id      UUID REFERENCES aiqg.org_unit(id),
+  unit_id      UUID                             -- Aether team id,
   rule         TEXT NOT NULL,          -- which rule proposed it
   confidence   TEXT NOT NULL CHECK (confidence IN ('high','medium','low')),
   evidence     JSONB NOT NULL,         -- ids and counts only, no text
@@ -420,7 +435,7 @@ CREATE TABLE aiqg.org_proposal (
 | `seed_aether_department` | a person's team from Aether `MEMBER_OF.department` (optional, one-shot import) | low |
 | `seed_keycloak_group` | a person's team from Keycloak group membership (optional, one-shot import) | low |
 
-Accepting a proposal writes the corresponding row (`org_member`, `token_placement`, `workflow_owner`) with `source='proposal_accepted'` and the proposal id in the audit metadata. Rejected proposals are not re-raised for the same evidence. Proposals run nightly and on demand, and are shown to the owner or manager of the proposed unit, not only to admins.
+Accepting a proposal writes the corresponding change: a team membership through aether-be's team API (which then flows back through the history copy), or an AIQG row (`token_placement`, `workflow_owner`, a `user_key` mapping) with `source='proposal_accepted'` and the proposal id in the audit metadata. Rejected proposals are not re-raised for the same evidence. Proposals run nightly and on demand, and are shown to the owner or manager of the proposed unit, not only to admins.
 
 ---
 
@@ -433,7 +448,7 @@ Accepting a proposal writes the corresponding row (`org_member`, `token_placemen
 CREATE TABLE aiqg.org_target (
   id          BIGSERIAL PRIMARY KEY,
   tenant_id   UUID NOT NULL,
-  unit_id     UUID NOT NULL REFERENCES aiqg.org_unit(id),
+  unit_id     UUID NOT NULL                    -- Aether team id (or the org's tenant id),
   metric      TEXT NOT NULL CHECK (metric IN
               ('spend','speed','quality','data_safety','uptime','overall')),
   comparator  TEXT NOT NULL CHECK (comparator IN ('max','min')),
@@ -478,7 +493,7 @@ Each item names the unit, says what is wrong in one sentence, names the owner, a
 Raw events age out at 90 days, so per-unit history must be materialized before that.
 
 - **New continuous aggregate** `aiqg.event_metrics_actor_1h`, grouped by `(bucket, tenant_id, token_id, owner_sub, user_id, agent_id, source_app, workflow, vendor, model)` with request count, tokens, cost, latency sums and CLEAR sums. Kept indefinitely, like the other rollups. **Placement and membership are not baked in.**
-- **Resolution at query time:** join the aggregate to effective `token_placement` (Billed, Reported-under), `org_member` (Involving) or `workflow_owner` (Served) rows by bucket time, then roll up the tree. Moving a token or a person therefore re-attributes all history, including history older than 90 days.
+- **Resolution at query time:** join the aggregate to effective `token_placement` (Billed, Reported-under), `team_member_history` (Involving) or `workflow_owner` (Served) rows by bucket time, then roll up the tree. Moving a token or a person therefore re-attributes all history, including history older than 90 days.
 - **Activity mix** comes from `sdlc_label` via `sdlc_turn.actor_sub`; **workflows** from `sdlc_workflow`.
 - **Cardinality check before building:** `user_id` is caller-set and unbounded. The aggregate folds `user_id` values that occur in fewer than N requests per hour into `'(other)'` if the row count measured in staging exceeds budget. Measure first.
 - **Data safety by app and data type** needs a new query: exposure today is tenant-wide counts by pattern (`QueryTagCounts`); the per-unit view groups `event_metrics.tags` by `source_app` and token placement. Whether `tags` carries enough to name the data type per event must be checked before P4 (§14).
@@ -493,7 +508,7 @@ One endpoint serves Home so the page makes one call: `GET /api/v1/home?scope=<un
 CREATE TABLE aiqg.followup (
   id            UUID PRIMARY KEY,
   tenant_id     UUID NOT NULL,
-  unit_id       UUID NOT NULL REFERENCES aiqg.org_unit(id),
+  unit_id       UUID NOT NULL                    -- Aether team id (or the org's tenant id),
   metric        TEXT NOT NULL,               -- as org_target.metric, or 'other'
   title         TEXT NOT NULL,               -- the one-sentence issue
   snapshot_id   UUID NOT NULL REFERENCES aiqg.report_snapshot(id),  -- frozen numbers
@@ -533,13 +548,12 @@ CREATE TABLE aiqg.followup_event (
 
 | Method | Path | Gate |
 |---|---|---|
-| GET | `/api/v1/org/units` (tree) | org member |
-| POST / PATCH | `/api/v1/org/units[/:id]` | `aiqg-admin`; org owner/manager for teams in their org |
-| GET | `/api/v1/org/units/:id/members` | org member |
-| PUT / DELETE | `/api/v1/org/units/:id/members/:kind/:key` `{role, valid_from}` | org owner/manager; team manager for their team |
-| PUT | `/api/v1/tokens/:id/placement` `{org_id, team_id, valid_from}` | org owner/manager; team manager into their team |
+| — | team and member CRUD, join requests | **aether-be** `/api/v1/teams…` (existing routes, extended per §5.1); aiqg-ui calls it through aiqg-dashboard-be with the user's own token, so Aether enforces the roles |
+| GET | `/api/v1/org/teams` (tree, from the history copy, with current members) | org member |
+| PUT | `/api/v1/org/teams/:id/targets/:metric` | owner/admin of the team or org |
+| PUT | `/api/v1/org/user-keys/:key` `{person_sub, valid_from}` | org owner/admin |
+| PUT | `/api/v1/tokens/:id/placement` `{team_id, valid_from}` | org owner/manager; team manager into their team |
 | PUT | `/api/v1/org/people/:sub/default-team` `{org_id, team_id}` | the person, or an org owner/manager |
-| PUT | `/api/v1/org/units/:id/targets/:metric` | owner/manager of the unit |
 | PUT | `/api/v1/sdlc/workflows/:id/owner` | `aiqg-admin`, or owner/manager of the target unit |
 | GET | `/api/v1/org/proposals?status=open` | owner/manager of the proposed unit; `aiqg-admin` |
 | POST | `/api/v1/org/proposals/:id/accept` \| `reject` | same |
@@ -586,7 +600,7 @@ The same "Needs your attention" list and org cards, emailed weekly to owners thr
 ## 12. Privacy & security
 
 - `owner_sub` and `owner_email` are personal data. Email is stored on the token row only (for display); events carry `owner_sub` only.
-- Baggage `user.id` stays pseudonymous (attribution doc rule); mapping it to a person is an owner/admin act recorded in `org_member`.
+- Baggage `user.id` stays pseudonymous (attribution doc rule); mapping it to a person is an owner/admin act recorded in `team_member_history`.
 - **Person-level rankings and costs** (D11) are visible to owners and managers of a unit containing the person, and to admins, by default. Tenant setting `org_person_visibility: managers | everyone`, default `managers`. A person always sees their own.
 - **Ask** never returns what the viewer's Home would not show (§9.4); questions and answers are logged with the viewer's `sub` for audit, and answers store ids and aggregates, not prompt text.
 - **Follow-up notes** are free text written by the sender; they are not sent to the model and not indexed.
@@ -607,7 +621,8 @@ The same "Needs your attention" list and org cards, emailed weekly to owners thr
 | **P0** | this document; backlog corrections from §3 | aether-shared | yes |
 | **P1 Record who** | §4.3: token owner + backfill, validate fields, response-event token id + owner, Timescale columns, import uploader, `sdlc_turn.actor_sub` | be, router, aether-shared, aiqg-import | yes — "who sent this" works on the existing events API |
 | **P2a Admin-surface fixes** | §12 F1 (tenant-filter `/admin/users`) and F2 (audit role grant/revoke, fail-closed) | be, aether-shared (`audit-log-entry.md`) | yes — security fixes; must land before any member picker ships |
-| **P2 Structure** | §5.0 link to Aether (link our two tenants; drift check), §5.1–5.2 teams, roles, token placement, §6, §10 CRUD, fail-closed audit; seed the TAS org (§5.3) by hand through the API; correct `account.md` | be, aether-be (read org membership), aether-shared | yes (API only) |
+| **P2-Aether Team extension** | §5.1 nesting, slug, archive, joining, back-dated `joined_at`, `aether.org.changes.v1` events; remove the two delete-all-teams paths; Aether UI team page shows nesting and join | aether-be, aether, aether-shared (Neo4j model docs) | yes — useful to Aether on its own |
+| **P2 Structure** | §5.0 link to Aether (link our two tenants; drift check), §5.1 history consumer + first sync + nightly reconcile, §5.2 token placement, §6, §10, fail-closed audit; seed the TAS org (§5.3) in Aether; correct `account.md` | be, aether-shared | after P2-Aether |
 | **P2b Multi-org viewer** | §5.4 org switcher, per-request tenant validated against membership, all-orgs fan-out; two-org isolation test | be, ui | after P2a, P2; before P5's all-orgs Home |
 | **P3 Infer/confirm** | §7 proposer + per-tenant ticket-prefix map; AIQG-71 on the same machinery | be | after P2 |
 | **P4 Rollups + targets** | §9.1 aggregate (cardinality measured first), §8 targets and status, `/home`, `/metrics/units`, data-safety-by-app query | aether-shared, be | after P1, P2 |
@@ -651,7 +666,8 @@ Dynamic configuration (options such as window sizes, `max_tokens`, cache and red
 6. Weekly digest (§11.3): agree before P6.
 7. Who may create orgs: any signed-in person (as on GitHub and in Aether today), or only `aiqg-admin`?
 8. **D14** — source of truth for org membership and teams (recommended: Aether owns orgs and org roles; AIQG owns teams and everything below).
-9. Should Aether's flat `Team` be extended (nesting, effective dates) so AIQG teams *are* Aether teams, or should AIQG teams stay AIQG-only with an optional `aether_team_id` mirror?
+9. Should `viewer` team members see person-level rows on the team's Home, or only totals?
+10. Do agent-builder agents inherit their team from the creating user's default team, or must the creator pick one? (`Agent.team_id` is empty on all 23 agents today.)
 
 ---
 
