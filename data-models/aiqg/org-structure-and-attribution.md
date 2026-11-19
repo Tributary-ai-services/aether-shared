@@ -25,7 +25,7 @@ reuses: aiqg.report_snapshot (frozen snapshot on Forward), aiqg.digest_subscript
 extends: tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md (adds the human actor; keeps its header contract and ladder)
 vocabulary_from: tas-session-corpus/docs/DESIGN-continuous-labeling.md §8.3-8.8, tas-session-corpus/docs/LABELS.md
 wireframe: https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb
-version: 0.6.0
+version: 0.6.1
 last_updated: 2026-11-18 (rev 5: teams are Aether's Team, extended; AIQG keeps a time-stamped copy. rev 4: an org IS a tenant, as in Aether; AIQG orgs link to Aether Organizations; multi-org viewer. rev 3: GitHub-style many-to-many structure, owners + targets, executive Home, Forward + Follow-ups, Ask)
 status: proposed (D1-D14 decided with John 2026-11-18; D15-D16 2026-11-19)
 plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
@@ -602,6 +602,27 @@ Targets (§8.1) apply per server and per tool, with defaults: Uptime ≥ 99%, p9
 
 **Rollup.** New continuous aggregate `aiqg.tool_call_1h`, grouped by `(bucket, tenant_id, token_id, owner_sub, source_app, agent_id, server_id, tool_name, observed_by, outcome)`, with count, duration sum and p95 sketch, result bytes and tokens, and finding counts. The §9.1 placement joins apply unchanged. `tool_name` cardinality is bounded by the catalogue. Names not in the catalogue fold into `(other)` per tenant past 200.
 
+**Scan once: the attestation.** Every turn re-sends the whole conversation, so the gateway re-scans every earlier message and every earlier tool result on every turn. A tool result is also scanned at the proxy and then scanned again at the gateway. That costs scan time on the hot path, and it inflates Data safety: one email in one tool result is counted once per turn for the rest of the conversation. Gatekeeper already has the mechanism to stop this, but nothing that scans uses it.
+
+| Piece | State on `origin/main` | Cite |
+|---|---|---|
+| Attestation record | Built. A signed record of one scan: `content_hash` (SHA-256 of the scanned content), scan profile, rule sets, clean, violation count, max severity, redacted, TTL. HMAC signer and verifier; `CanSkip` checks hash, tenant, trust tier and profile. Header `X-TAS-Scan-Attestation`. Default TTL 5 minutes. | Gatekeeper `pkg/types/types.go:10-20`, `pkg/attest/attestor.go:37-96`, `pkg/pipeline/default_processor.go:101-111` |
+| Attestation cache | In-memory map per process only | Gatekeeper `pkg/attest/cache_impl.go:21-70` |
+| LLM gateway | **Honors but never receives or mints one.** `HonorAttestations: true`, but `EnableAttestation = false // Simplified for now`, and neither `ProcessRequest` sets `Attestation`. The redaction path scans each message a second time, with a comment saying "attestation removes the double-scan later". | router `internal/gatekeeper/gatekeeper.go:118,164-168,338-349,401,486-497` |
+| MCP proxy | **Mints none.** The interface comment says "content-hash attested", but the only hash is the reduce-once LRU (reduction only, per pod). The scan has no dedupe. | tas-mcp `internal/federation/result_processor.go:21`, `reducing_processor.go:62-81,211-225` |
+
+Design:
+- **Look up by content, not by header.** A header works for one service calling the next. It cannot follow a tool result, which leaves the proxy, enters the agent, and comes back days later inside an LLM request body. So the scanner that sees content first writes the attestation to a **shared store** (Redis, the same one the federation registry uses). Each later scanner hashes what it is about to scan and looks it up. The key is `(tenant_id, sha256(normalised content), scan_profile, ruleset_version)`. A header is still sent where one exists, as a fast path.
+- **Unit of scanning is the message, not the request.** The gateway hashes each message (and each tool result inside one), skips the ones with a valid attestation, and scans only what is new. On a long conversation that is most of the scan cost.
+- **TTL follows the conversation**, not 5 minutes: 24 hours by default, refreshed on each hit, because the history is re-sent for as long as the conversation runs.
+- **A rule change invalidates.** `ruleset_version` is in the key, so new patterns re-scan old content once.
+- **Redaction.** When the proxy redacts, it attests the *output* hash too, so the redacted text the gateway later sees is recognised.
+- **Count each finding once.** A finding is counted against `(tenant_id, content_hash, pattern)` at the first scan, by the source that made it: the proxy for tool results, the gateway for prompts. Later sightings record `scan_skipped = valid_attestation` and the `attestation_id`, and add no findings. This is the rule that makes the Data-safety numbers in §8 and on the Tools page mean "how many times sensitive data entered", not "how many turns it stayed in context".
+- **Measure it.** Events carry `scan_skipped` and `scan_ms`. The Tools page and Live Monitor show skip rate and scan time saved.
+- **Tamper evidence.** The signer is the same HMAC signer the audit-log gap notes as unwired. Wiring it here makes it the first live use. It does not make the audit log tamper-evident.
+
+Tracked as GK-5. Lands in P4-Tools (proxy writes, gateway reads), but the gateway half helps prompts on its own and can ship first.
+
 **What exists now.** The scan (G2), reduction and federation are built and enabled (`tas-mcp` PR #27; `SCANNING_ENABLED=true`, log-only). Findings are a zap log line with `server_id` and pattern counts (`internal/scanning/install.go:61-82`). There are no Prometheus metrics, no events, and no caller identity. The gateway records `tools_declared` as a boolean and links flows by `tool_call_id`, but records no tool names. Open: whether the gateway's prompt scan covers `role: tool` messages. If it does, findings in tool results are already caught but credited to the prompt rather than the tool. Check before P4-Tools.
 
 ---
@@ -691,7 +712,7 @@ The same "Needs your attention" list and org cards, emailed weekly to owners thr
 | **P2b Multi-org viewer** | §5.4 org switcher, per-request tenant validated against membership, all-orgs fan-out; two-org isolation test | be, ui | after P2a, P2; before P5's all-orgs Home |
 | **P3 Infer/confirm** | §7 proposer + per-tenant ticket-prefix map; AIQG-71 on the same machinery | be | after P2 |
 | **P4 Rollups + targets** | §9.1 aggregate (cardinality measured first), §8 targets and status, `/home`, `/metrics/units`, data-safety-by-app query | aether-shared, be | after P1, P2 |
-| **P4-Tools** | §9.5: fix MCP-14 first; proxy accepts `TAS-Auth` + baggage and resolves it; `tool_call.v1` events from proxy and gateway (tool names, `tool_call_id`, outcome); server probes; catalogue snapshot; `tool_call_1h`; `mcp_server` member kind; tool targets | tas-mcp, router, tas-spark-jobs, aether-shared, be | MCP-14 alone, yes; the rest after P1, P2 |
+| **P4-Tools** | §9.5: fix MCP-14 first; scan-once attestation in a shared store (gateway half can ship first, GK-5); proxy accepts `TAS-Auth` + baggage and resolves it; `tool_call.v1` events from proxy and gateway (tool names, `tool_call_id`, outcome); server probes; catalogue snapshot; `tool_call_1h`; `mcp_server` member kind; tool targets | tas-mcp, router, tas-spark-jobs, aether-shared, be | MCP-14 alone, yes; the rest after P1, P2 |
 | **P5 Home + Settings** | §11.1 new Home (replaces `HomePage.tsx`), §11.2 Settings ▸ Organization, token dialog, unit filters | ui | after P2-P4 |
 | **P5-Tools** | §11.2 **Tools** page and the Home additions in §11.1 | ui | after P4-Tools, P5 |
 | **P6 Forward + Follow-ups** | §9.3 tables, email, Follow-ups page; §11.3 weekly digest if agreed | be, ui | after P5 |
