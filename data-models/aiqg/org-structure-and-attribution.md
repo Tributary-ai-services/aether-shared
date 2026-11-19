@@ -69,7 +69,7 @@ The primary reader of Home is a CEO or CIO. They will rarely open Traffic Explor
 | D12 | **Plain language on Home.** Spend, Speed, Quality, Data safety, Uptime, Overall; the CLEAR letter is shown on hover, not as the label. **No left-hand navigation on Home**: it keeps today's clean layout, with Ask and Follow-ups in the header. | John, 2026-11-18 |
 | D15 | **An agent belongs to its owner, inside a tenant; "public" is a visibility choice, not a change of owner.** agent-builder already scopes every agent by `tenant_id` + `owner_id` + `space_id`, and the owner can make it public in the UI. AIQG follows that: an agent's org is its tenant and its team is its owner's default team in that org (§5.2), unless someone places it on a team explicitly. Making an agent public changes who can *use* it, never who it is attributed to or who pays: a run is billed to the tenant of the token that made it (D5). Answers Q10. | John, 2026-11-19 |
 | D16 | **Tool calls get the same visibility as LLM vendor calls.** Failed, slow and never-called tools, and sensitive data in tool results, are measured per server and per tool, credited to the calling org and team, and owned by the team that runs the server. Two sources (the MCP proxy and the LLM gateway) emit one event type, so tools that bypass the proxy are still seen (§9.5). | John, 2026-11-19 |
-| D17 | **Home is a dashboard of widgets with a default per role, and each person can customize it.** The executive default puts Needs your attention, the org cards, Spend, Data safety (prompts and tool results), the CLEAR scorecard and Tool health first. Every widget drills to its report, including Analysis ▸ Tools. An org owner may set the default for their org. Ask pins are widgets. | John, 2026-11-19 |
+| D17 | **Home is a dashboard of widgets with a default per role, and each person can customize it.** The executive default puts Needs your attention, the org cards, the CLEAR scorecard, Spend, Data safety (prompts and tool results) and a CEO/CIO-level Tools (MCP) overview first. Every widget drills to its report, including Analysis ▸ Tools. An org owner may set the default for their org. Ask pins are widgets. | John, 2026-11-19 |
 
 ### Not this
 
@@ -679,7 +679,8 @@ Home replaces the current landing page with a **grid of widgets**. Everyone star
 | **Your orgs / teams** | one card per child unit: owner, spend and trend, the scores, Tools uptime, status pills | re-scopes Home to that unit | exec, owner | L |
 | **CLEAR scorecard** | the six top-5 tables. Rank switch: orgs / teams / apps / workflows / **tools**. Order switch: needs attention / best | Reports ▸ CLEAR Scorecard; the Tools view drills to Analysis ▸ Tools | exec, owner, manager | L |
 | **Data safety** | sensitive data that came in, counted once (§9.5 attestation), **split by where it came from: prompts vs tool results**. Shows data types, trend, top apps and top tools, and the share of hits under a redact policy vs log-only | prompts: Reports ▸ What's leaking. Tool results: Analysis ▸ Tools | exec, owner, manager | M |
-| **Tool health** | calls that worked, p95, servers down, unused tools, coverage (proxy vs gateway only) | Analysis ▸ Tools | exec (compact), owner, manager | M |
+| **Tools (MCP) overview** | the executive view of the tool layer, in one card: calls that worked against target, servers down or slow, sensitive data in tool results, what tool output cost in prompt tokens and what reduction saved, tools never called and what offering them costs, and coverage (proxy vs gateway only). Ends with the worst tool problem and its owner, with Forward | Analysis ▸ Tools | exec | M |
+| **Tool health** | the compact version: calls that worked, p95, servers down, unused tools | Analysis ▸ Tools | owner, manager | S |
 | **Spend and forecast** | month to date against budget, projected month end, by child unit; spend-cap state | Reports ▸ Cost | exec, owner, billing | M |
 | **Savings** | what caching, payload reduction and routing saved this period, in dollars, next to spend | Reports ▸ Caching, Reports ▸ Model economics | exec, owner | S |
 | **Adoption** | active people, apps and agents, their trend, and the share of the org's people using AI this period | Analysis ▸ Activity (scoped version) | exec, owner | S |
@@ -695,7 +696,7 @@ Home replaces the current landing page with a **grid of widgets**. Everyone star
 
 | Role | Layout, in order |
 |---|---|
-| **Executive**: owner, admin or billing on several orgs (the CEO/CIO view) | Needs your attention · Your orgs · Spend and forecast + Data safety · CLEAR scorecard · Tool health + Savings + Adoption · Compliance posture + Vendor mix + Visibility · Follow-ups |
+| **Executive**: owner, admin or billing on several orgs (the CEO/CIO view) | Needs your attention · Your orgs · CLEAR scorecard · Spend and forecast + Data safety · **Tools (MCP) overview** + Savings + Adoption · Follow-ups + Compliance posture + Vendor mix + Visibility |
 | **Org owner** | Needs your attention · Your teams · Spend and forecast + Data safety · CLEAR scorecard · Tool health + Savings · Follow-ups |
 | **Team manager** | Needs your attention · Data safety + Tool health · CLEAR scorecard (apps) · Follow-ups |
 | **Member** | My usage · their team's card · Follow-ups |
@@ -781,7 +782,7 @@ The same "Needs your attention" list and org cards, emailed weekly to owners thr
 | **P4 Rollups + targets** | §9.1 aggregate (cardinality measured first), §8 targets and status, `/home`, `/metrics/units`, data-safety-by-app query | aether-shared, be | after P1, P2 |
 | **P4-Tools** | §9.5: fix MCP-14 first; scan-once attestation in a shared store (gateway half can ship first, GK-5); proxy accepts `TAS-Auth` + baggage and resolves it; `tool_call.v1` events from proxy and gateway (tool names, `tool_call_id`, outcome); server probes; catalogue snapshot; `tool_call_1h`; `mcp_server` member kind; tool targets | tas-mcp, router, tas-spark-jobs, aether-shared, be | MCP-14 alone, yes; the rest after P1, P2 |
 | **P5 Home + Settings** | §11.1 new Home as widgets (replaces `HomePage.tsx`): widget framework, the catalogue minus tool and P8 widgets, system default layouts; ship with defaults first, then Customize, org defaults and `home_layout`; §11.2 Settings ▸ Organization, token dialog, unit filters | ui | after P2-P4 |
-| **P5-Tools** | §11.2 **Tools** page; Tool health widget; tool-results half of the Data safety widget; Tools in the CLEAR rank switch | ui | after P4-Tools, P5 |
+| **P5-Tools** | §11.2 **Tools** page; Tools (MCP) overview and Tool health widgets; tool-results half of the Data safety widget; Tools in the CLEAR rank switch | ui | after P4-Tools, P5 |
 | **P6 Forward + Follow-ups** | §9.3 tables, email, Follow-ups page; §11.3 weekly digest if agreed | be, ui | after P5 |
 | **P7 ✦ Ask** | §9.4: the extra Plan #20 tools, the model loop through our gateway, viewer scoping, provenance, pins | be (data-mcp + dashboard), ui | after P4; depends on Plan #20 Phase 1 |
 | **P8 Recommended actions** (future) | §14.1 | be, ui, router | after P4, P6 |
