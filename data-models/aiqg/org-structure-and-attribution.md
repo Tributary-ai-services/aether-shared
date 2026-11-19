@@ -667,7 +667,7 @@ The wireframe is the reference: <https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyC
 
 ### 11.2 Other surfaces
 
-- **Tools** page (header nav, between Traffic Explorer and Governance), the tool-layer twin of Reliability and Provider Quality: a coverage line (calls via proxy vs seen by gateway only), the six metrics, a server table that drills to its tools, Never called, Data safety in tool results, and the server probe history. Scoped like Home: an org owner sees their org's calls across all servers; the MCP team also sees every caller of the servers it owns.
+- **Tools** page, under **Analysis** at `/tools`, after Traffic Explorer (`src/config/nav.ts:64-74`), the tool-layer twin of Reliability and Provider Quality: a coverage line (calls via proxy vs seen by gateway only), the six metrics, a server table that drills to its tools, Never called, Data safety in tool results, and the server probe history. Scoped like Home: an org owner sees their org's calls across all servers; the MCP team also sees every caller of the servers it owns.
 - **Home** gains tool problems in Needs your attention, a **Tools** row on each org card, and **Tools** in the CLEAR table's Orgs / Teams / Apps / Workflows switch.
 - **Follow-ups** page: To me / From me / Cc; state, reply-by, snapshot vs live.
 - **✦ Ask** panel: question box, suggested questions for the current scope, answer as text + table/chart, "How I got this", Pin / Show as view / Forward.
