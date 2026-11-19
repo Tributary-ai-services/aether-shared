@@ -25,9 +25,9 @@ reuses: aiqg.report_snapshot (frozen snapshot on Forward), aiqg.digest_subscript
 extends: tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md (adds the human actor; keeps its header contract and ladder)
 vocabulary_from: tas-session-corpus/docs/DESIGN-continuous-labeling.md §8.3-8.8, tas-session-corpus/docs/LABELS.md
 wireframe: https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb
-version: 0.5.0
+version: 0.6.0
 last_updated: 2026-11-18 (rev 5: teams are Aether's Team, extended; AIQG keeps a time-stamped copy. rev 4: an org IS a tenant, as in Aether; AIQG orgs link to Aether Organizations; multi-org viewer. rev 3: GitHub-style many-to-many structure, owners + targets, executive Home, Forward + Follow-ups, Ask)
-status: proposed (D1-D14 decided with John 2026-11-18; D15 2026-11-19)
+status: proposed (D1-D14 decided with John 2026-11-18; D15-D16 2026-11-19)
 plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
 ```
 
@@ -67,6 +67,7 @@ The primary reader of Home is a CEO or CIO. They will rarely open Traffic Explor
 | D14 | **Aether is the source of truth for orgs, teams and membership.** Aether's existing `Team` is extended (nesting, joining, archive, change events) rather than duplicated, so agent-builder, notebooks and AIQG share one team model. AIQG keeps an append-only, time-stamped copy for attribution and owns only what is AIQG's: token placement, targets, follow-ups, workflow owners, baggage-key mappings. Amends D1. | John, 2026-11-18 |
 | D12 | **Plain language on Home.** Spend, Speed, Quality, Data safety, Uptime, Overall; the CLEAR letter is shown on hover, not as the label. **No left-hand navigation on Home**: it keeps today's clean layout, with Ask and Follow-ups in the header. | John, 2026-11-18 |
 | D15 | **An agent belongs to its owner, inside a tenant; "public" is a visibility choice, not a change of owner.** agent-builder already scopes every agent by `tenant_id` + `owner_id` + `space_id`, and the owner can make it public in the UI. AIQG follows that: an agent's org is its tenant and its team is its owner's default team in that org (§5.2), unless someone places it on a team explicitly. Making an agent public changes who can *use* it, never who it is attributed to or who pays: a run is billed to the tenant of the token that made it (D5). Answers Q10. | John, 2026-11-19 |
+| D16 | **Tool calls get the same visibility as LLM vendor calls.** Failed, slow and never-called tools, and sensitive data in tool results, are measured per server and per tool, credited to the calling org and team, and owned by the team that runs the server. Two sources (the MCP proxy and the LLM gateway) emit one event type, so tools that bypass the proxy are still seen (§9.5). | John, 2026-11-19 |
 
 ### Not this
 
@@ -156,6 +157,8 @@ Many-to-many membership means a person's work cannot simply be summed into every
 | Aether tenants | the space context gives exactly one tenant per scope: org → `org.TenantID`, personal → `user.PersonalTenantID`. A second path gives each `Space` node its own `tenant_<unix-seconds>` id (the TAS org's two spaces have two more ids), and older personal tenants use the same non-UUID form | `services/space_context.go:176,232,262`; `models/space.go:154` |
 | AIQG tenants | `tenant_id` is a Keycloak user attribute copied into the JWT; one `aiqg.account` row per tenant. Live: `65ea3247…` (our traffic, 631 tokens) and `a689c0b2…` (demo); 3 more users carry ids with no account row. **Neither id appears anywhere in Neo4j**: no AIQG tenant is linked to an Aether org or person | `internal/auth/keycloak.go:40-49`; `migrations/002_account.sql`; Keycloak + Postgres 2026-11-18 |
 | AIQG ↔ Space binding | `account.md` specifies a 1:1 `(:Space)-[:HAS_AIQG_ACCOUNT]->(:AIQGAccount)` edge via `Space.tenant_id`. **Never built**: 0 edges, 0 nodes; accounts live in Postgres. The doc is stale | `aiqg/account.md` §2, §5 |
+| MCP proxy | federation + Gatekeeper boundary scan (G2) built and enabled, log-only. **Since 2026-11-03 it reaches 1 of 12 servers:** its NetworkPolicy allows egress only on 53/80/443/8080, so Redis (6379) and servers on 8000/8087/8091/8092 are refused, about 33,000 errors a day, while every CR still says `Registered` (MCP-14). Findings are log lines only; no metrics, no events, no caller identity | tas-mcp `internal/scanning/install.go:61-82`, `k8s/base/networkpolicy.yaml`; Loki 2026-11-19 |
+| Tool calls at the gateway | `tools_declared` boolean; flows linked by echoed `tool_call_id`; **no tool names recorded** | router `pkg/aiqg/events/event.go:142-160,299`, `builder.go:291-346` |
 | Home page | four link cards (Live Monitor, Traffic Explorer, Governance, Reports) under the spend-cap and exposure banners; no left-hand nav | aiqg-ui `src/pages/HomePage.tsx` |
 | Imported sessions | `imported_trace` has **no uploader or token**; the code adapter sets no `Subject` | `migrations/015`, `039`; aiqg-import `adapter/code/code.go:181-182` |
 | SDLC | `sdlc_turn` has `repo`, `session_id`, **no actor**. Ticket prefixes hard-coded `(OPS\|SEC\|DOC\|AIQG\|AB\|AM\|TEST\|P\d\|PLAN\|AUTH\|ARCH)-\d{1,3}` | `migrations/038:25-41`; `internal/sdlclabel/workflows.go:48` |
@@ -545,6 +548,64 @@ CREATE TABLE aiqg.followup_event (
 
 ---
 
+### 9.5 The tool layer: MCP and tool calls (D16)
+
+**Why.** LLM vendor calls get full treatment: speed, failures, cost, quality, data safety, by vendor and model. Tool calls get none, yet an agent's answer is only as good as the tools it calls. Today a failed or slow tool call is invisible, and so are compliance findings in tool output and tools that are never called. §3 shows how badly this can go unnoticed: the production MCP proxy has reached 1 of its 12 servers since 2026-11-03 (MCP-14). It logged about 33,000 errors a day, and the operator still reports every server as `Registered`.
+
+**Two sources, one event.** Two components see tool calls, and they cover different ground:
+
+| Source | Sees | Misses |
+|---|---|---|
+| **MCP proxy** (`tas-mcp` federation) | Every call routed through it: server, tool, duration, outcome, result size, reduction, and boundary-scan findings on the result (G2). It also sees each server's tool catalogue (`tools/list`). | Tools the client runs itself: Claude Code's local MCP servers, plain function calls, any agent that talks to a server directly. agent-builder calls `napkin-mcp` directly today (`MCP_SERVER_URL`). |
+| **LLM gateway** (`tas-llm-router`) | Every tool the model is offered (the request's `tools`) and every call the model makes (`tool_calls` in the response), proxy or not. It also sees when a result comes back: the next request echoes the `tool_call_id`, which the flow linker already matches (`builder.go:291-346`). | Why a call failed, how long the tool itself took (round trip includes the client), and anything about the server. |
+
+Both emit one CloudEvent type, `com.tas.aiqg.tool_call.v1`, on the existing `tas.aiqg.events.v1` topic, so the Spark job lands them next to LLM events. A call seen by both is joined on `tool_call_id`, with the proxy's fields winning. Fields:
+
+```
+tenant_id, token_id, owner_sub, user_id, agent_id, source_app, flow_id, step_id   -- same identity as LLM events (§4)
+tool_call_id, tool_name, server_id (NULL = not via the proxy), observed_by ('proxy'|'gateway'|'both')
+outcome  'ok' | 'tool_error' | 'timeout' | 'unreachable' | 'blocked' | 'no_result'
+duration_ms (proxy), round_trip_ms (gateway), result_bytes, result_tokens_est, reduced_bytes
+findings  { "<pattern category>": count }   -- counts only; never the matched value
+```
+
+- **`no_result`** is a call the model made whose result never came back within the flow. The gateway is the only source that can see it.
+- **Never called.** Not an event. Each night, compare the catalogue (proxy `tools/list` plus the gateway's offered tool names) with the calls over the window. Report tools offered but not called in 30 days per server, and per app. Offering an unused tool costs input tokens on every request: the gateway can measure that cost from the size of the `tools` schema.
+- **Server health.** The proxy probes each registered server on a schedule and publishes reachability. A server is healthy only when its probe passes, not when its CR says `Registered`. MCP-14 is the case this rule exists for.
+
+**Caller identity at the proxy.** The proxy knows nothing about its caller today (§3): no tenant, user or token. Callers send the same `TAS-Auth` token the gateway accepts, plus W3C `baggage`. The proxy resolves the token through `/internal/auth/validate`, as the gateway does, with the same short cache. A call without a token is still served and recorded, under `(unattributed)` in an operator-only view. Turning that into a refusal is a per-tenant setting, off by default (compare open question 1).
+
+**Attribution and ownership.**
+- **Who called** follows the token, like any LLM event: org = token tenant, team = placement or default team (§5.2). A tool call has no vendor cost of its own. Its cost is the tokens its result adds to the next prompt, `result_tokens_est`, priced at that request's model rate.
+- **Who owns the server.** Each MCP server is a member of an owning team, with new member kind `mcp_server` in `team_member_history` (answers open question 2). In the §5.3 seed the TAS servers belong to **Engineering ▸ MCP**.
+- **Who a problem goes to** depends on what is wrong:
+
+| Problem | Forward to | Cc |
+|---|---|---|
+| Server unreachable, failing or slow | server's owning team | calling team, if one team carries most of the calls |
+| Sensitive data in tool results | calling team (they chose to fetch it) | server's owning team (they can filter at source) |
+| Tool never called | server's owning team (retire it?) | apps that offer it (stop offering it) |
+| `no_result` calls | calling team (their client dropped the result) | — |
+
+**Plain-language metrics**, the same five as LLM calls, plus one:
+
+| Metric | Tool layer meaning |
+|---|---|
+| Uptime | share of calls with `outcome = ok`; a server whose probe fails counts as down |
+| Speed | p95 `duration_ms` (proxy) or `round_trip_ms` (gateway only) |
+| Data safety | findings per 1,000 results, weighted by data type, as for prompts (§8.2) |
+| Spend | tokens added to prompts by tool results; savings from reduction shown next to it |
+| Quality | `no_result` and `tool_error` rate (a call that failed and was then retried counts once) |
+| **Unused** | tools offered but not called in 30 days, and the input tokens they cost |
+
+Targets (§8.1) apply per server and per tool, with defaults: Uptime ≥ 99%, p95 under 5 s, zero high-severity findings. A server that misses one appears in **Needs your attention**, ranked by calls affected, like any other unit.
+
+**Rollup.** New continuous aggregate `aiqg.tool_call_1h`, grouped by `(bucket, tenant_id, token_id, owner_sub, source_app, agent_id, server_id, tool_name, observed_by, outcome)`, with count, duration sum and p95 sketch, result bytes and tokens, and finding counts. The §9.1 placement joins apply unchanged. `tool_name` cardinality is bounded by the catalogue. Names not in the catalogue fold into `(other)` per tenant past 200.
+
+**What exists now.** The scan (G2), reduction and federation are built and enabled (`tas-mcp` PR #27; `SCANNING_ENABLED=true`, log-only). Findings are a zap log line with `server_id` and pattern counts (`internal/scanning/install.go:61-82`). There are no Prometheus metrics, no events, and no caller identity. The gateway records `tools_declared` as a boolean and links flows by `tool_call_id`, but records no tool names. Open: whether the gateway's prompt scan covers `role: tool` messages. If it does, findings in tool results are already caught but credited to the prompt rather than the tool. Check before P4-Tools.
+
+---
+
 ## 10. API (aiqg-dashboard-be)
 
 | Method | Path | Gate |
@@ -585,6 +646,8 @@ The wireframe is the reference: <https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyC
 
 ### 11.2 Other surfaces
 
+- **Tools** page (header nav, between Traffic Explorer and Governance), the tool-layer twin of Reliability and Provider Quality: a coverage line (calls via proxy vs seen by gateway only), the six metrics, a server table that drills to its tools, Never called, Data safety in tool results, and the server probe history. Scoped like Home: an org owner sees their org's calls across all servers; the MCP team also sees every caller of the servers it owns.
+- **Home** gains tool problems in Needs your attention, a **Tools** row on each org card, and **Tools** in the CLEAR table's Orgs / Teams / Apps / Workflows switch.
 - **Follow-ups** page: To me / From me / Cc; state, reply-by, snapshot vs live.
 - **✦ Ask** panel: question box, suggested questions for the current scope, answer as text + table/chart, "How I got this", Pin / Show as view / Forward.
 - **Settings ▸ Organization**: org and team tree editor (nesting by drag), members with roles and a "since" date, token placement, default team, targets per unit, the **Unassigned** list (ordered by cost), and the proposal queue. Org owners see their orgs; admins see all.
@@ -628,7 +691,9 @@ The same "Needs your attention" list and org cards, emailed weekly to owners thr
 | **P2b Multi-org viewer** | §5.4 org switcher, per-request tenant validated against membership, all-orgs fan-out; two-org isolation test | be, ui | after P2a, P2; before P5's all-orgs Home |
 | **P3 Infer/confirm** | §7 proposer + per-tenant ticket-prefix map; AIQG-71 on the same machinery | be | after P2 |
 | **P4 Rollups + targets** | §9.1 aggregate (cardinality measured first), §8 targets and status, `/home`, `/metrics/units`, data-safety-by-app query | aether-shared, be | after P1, P2 |
+| **P4-Tools** | §9.5: fix MCP-14 first; proxy accepts `TAS-Auth` + baggage and resolves it; `tool_call.v1` events from proxy and gateway (tool names, `tool_call_id`, outcome); server probes; catalogue snapshot; `tool_call_1h`; `mcp_server` member kind; tool targets | tas-mcp, router, tas-spark-jobs, aether-shared, be | MCP-14 alone, yes; the rest after P1, P2 |
 | **P5 Home + Settings** | §11.1 new Home (replaces `HomePage.tsx`), §11.2 Settings ▸ Organization, token dialog, unit filters | ui | after P2-P4 |
+| **P5-Tools** | §11.2 **Tools** page and the Home additions in §11.1 | ui | after P4-Tools, P5 |
 | **P6 Forward + Follow-ups** | §9.3 tables, email, Follow-ups page; §11.3 weekly digest if agreed | be, ui | after P5 |
 | **P7 ✦ Ask** | §9.4: the extra Plan #20 tools, the model loop through our gateway, viewer scoping, provenance, pins | be (data-mcp + dashboard), ui | after P4; depends on Plan #20 Phase 1 |
 | **P8 Recommended actions** (future) | §14.1 | be, ui, router | after P4, P6 |
@@ -661,7 +726,7 @@ Dynamic configuration (options such as window sizes, `max_tokens`, cache and red
 ### 14.2 Open questions
 
 1. Should a tenant be able to require **per-person tokens** (refuse a shared token without baggage `user.id`)? Not in v1.
-2. Do the member kinds cover agent-builder agents and MCP servers, or does an MCP server need its own kind?
+2. ~~Does an MCP server need its own member kind?~~ Yes: `mcp_server` (§9.5).
 3. `user_id` cardinality budget for §9.1 — measure on current traffic before choosing N.
 4. Does `event_metrics.tags` carry the data type per event well enough for "what type of data is leaking, by app"? Check before P4; if not, the router must emit the matched pattern's category.
 5. Should targets inherit from parent units by default? Proposed: no (§8.1).
@@ -670,6 +735,8 @@ Dynamic configuration (options such as window sizes, `max_tokens`, cache and red
 8. ~~Source of truth for org membership and teams.~~ Decided as D14: Aether owns orgs, teams and membership.
 9. Should `viewer` team members see person-level rows on the team's Home, or only totals?
 10. ~~Do agent-builder agents inherit their team from the creating user's default team?~~ Decided as D15: yes. An agent is scoped by tenant and owner; its team is the owner's default team unless placed. Sharing is visibility only (F3).
+11. Does the gateway's prompt scan cover `role: tool` messages? If so, tool-result findings already exist and only need crediting to the tool (§9.5).
+12. Should a call to the MCP proxy without a token be refused? Proposed: served and recorded as `(unattributed)` by default, refusal a per-tenant setting.
 
 ---
 
