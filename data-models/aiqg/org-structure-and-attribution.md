@@ -17,7 +17,8 @@ databases:
   - aiqg.org_target (Postgres, aiqg db) — NEW, append-only
   - aiqg.org_proposal (Postgres, aiqg db) — NEW
   - aiqg.followup, aiqg.followup_event (Postgres, aiqg db) — NEW
-  - aiqg.home_pin (Postgres, aiqg db) — NEW
+  - aiqg.home_layout (Postgres, aiqg db) — NEW (per-user and org-default Home layouts)
+  - aiqg.home_pin (Postgres, aiqg db) — NEW (saved Ask question; placed on Home as a widget)
   - aiqg.token (Postgres) — EXTENDED: owner_sub, owner_email
   - aiqg.imported_trace, aiqg.sdlc_turn (Postgres) — EXTENDED: actor columns
   - aiqg.event_metrics (Timescale) — EXTENDED: token_id, owner_sub; NEW rollup event_metrics_actor_1h
@@ -25,9 +26,9 @@ reuses: aiqg.report_snapshot (frozen snapshot on Forward), aiqg.digest_subscript
 extends: tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md (adds the human actor; keeps its header contract and ladder)
 vocabulary_from: tas-session-corpus/docs/DESIGN-continuous-labeling.md §8.3-8.8, tas-session-corpus/docs/LABELS.md
 wireframe: https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb
-version: 0.6.1
+version: 0.7.0
 last_updated: 2026-11-18 (rev 5: teams are Aether's Team, extended; AIQG keeps a time-stamped copy. rev 4: an org IS a tenant, as in Aether; AIQG orgs link to Aether Organizations; multi-org viewer. rev 3: GitHub-style many-to-many structure, owners + targets, executive Home, Forward + Follow-ups, Ask)
-status: proposed (D1-D14 decided with John 2026-11-18; D15-D16 2026-11-19)
+status: proposed (D1-D14 decided with John 2026-11-18; D15-D17 2026-11-19)
 plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
 ```
 
@@ -68,6 +69,7 @@ The primary reader of Home is a CEO or CIO. They will rarely open Traffic Explor
 | D12 | **Plain language on Home.** Spend, Speed, Quality, Data safety, Uptime, Overall; the CLEAR letter is shown on hover, not as the label. **No left-hand navigation on Home**: it keeps today's clean layout, with Ask and Follow-ups in the header. | John, 2026-11-18 |
 | D15 | **An agent belongs to its owner, inside a tenant; "public" is a visibility choice, not a change of owner.** agent-builder already scopes every agent by `tenant_id` + `owner_id` + `space_id`, and the owner can make it public in the UI. AIQG follows that: an agent's org is its tenant and its team is its owner's default team in that org (§5.2), unless someone places it on a team explicitly. Making an agent public changes who can *use* it, never who it is attributed to or who pays: a run is billed to the tenant of the token that made it (D5). Answers Q10. | John, 2026-11-19 |
 | D16 | **Tool calls get the same visibility as LLM vendor calls.** Failed, slow and never-called tools, and sensitive data in tool results, are measured per server and per tool, credited to the calling org and team, and owned by the team that runs the server. Two sources (the MCP proxy and the LLM gateway) emit one event type, so tools that bypass the proxy are still seen (§9.5). | John, 2026-11-19 |
+| D17 | **Home is a dashboard of widgets with a default per role, and each person can customize it.** The executive default puts Needs your attention, the org cards, Spend, Data safety (prompts and tool results), the CLEAR scorecard and Tool health first. Every widget drills to its report, including Analysis ▸ Tools. An org owner may set the default for their org. Ask pins are widgets. | John, 2026-11-19 |
 
 ### Not this
 
@@ -504,7 +506,7 @@ Raw events age out at 90 days, so per-unit history must be materialized before t
 
 ### 9.2 Home summary
 
-One endpoint serves Home so the page makes one call: `GET /api/v1/home?scope=<unit_id|tenant>&period=` returns the needs-attention list, one card per child unit (owner, spend + trend, the five scores, status per target), and the six top-5 tables. The tables rank **orgs, teams, apps or workflows** (switch), ordered by needs-attention (worst against target first) or best. Person rows appear only for viewers allowed by D11.
+One endpoint serves Home so the page makes one call: `GET /api/v1/home?scope=<unit_id|tenant>&period=&widgets=` returns one section per widget in the viewer's layout (§11.1). The original sections are the needs-attention list, one card per child unit (owner, spend + trend, the five scores, status per target), and the six top-5 tables. The tables rank **orgs, teams, apps or workflows** (switch), ordered by needs-attention (worst against target first) or best. Person rows appear only for viewers allowed by D11.
 
 ### 9.3 Forward and Follow-ups (D9)
 
@@ -648,6 +650,8 @@ Tracked as GK-5. Lands in P4-Tools (proxy writes, gateway reads), but the gatewa
 | POST | `/api/v1/followups/:id/events` | recipient, cc or sender |
 | POST | `/api/v1/ask` (streamed) | org member, viewer-scoped |
 | GET / POST / DELETE | `/api/v1/home/pins` | the viewer |
+| GET / PUT | `/api/v1/home/layout` (resolved layout; PUT writes the viewer's own) | the viewer |
+| PUT / DELETE | `/api/v1/org/home-default` | org owner (fail-closed audit) |
 
 Every write is tenant-scoped from the JWT and audited fail-closed (§5.1). The `/admin/users` fix (F1) is a precondition for every member picker.
 
@@ -657,13 +661,76 @@ Every write is tenant-scoped from the JWT and audited fail-closed (§5.1). The `
 
 The wireframe is the reference: <https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb>.
 
-### 11.1 Home replaces the current landing page
+### 11.1 Home is a dashboard of widgets (D17)
 
-- **No left-hand navigation** (D12). Home keeps today's clean, full-width layout and the existing banners (spend cap, exposure). The header carries the scope ("All my orgs · 3" with an org switcher, as on GitHub), a period switch, **Follow-ups (n)** and **✦ Ask**. Live Monitor, Traffic Explorer, Governance and Reports stay reachable from the app header exactly as today; Home no longer shows them as cards.
-- **Order on the page:** Needs your attention (§8.2) → one card per org (or per team when the scope is one org): owner, spend with a trend line, Quality / Speed / Data safety / Uptime, status pills against targets → six top-5 tables (Spend, Speed, Quality, Data safety, Uptime, Overall) with the rank switch (orgs / teams / apps / workflows) and order switch (needs attention / best).
-- **Drill in place:** clicking a card, row or issue re-scopes Home to that unit (breadcrumb: Acme › Sales › Demo › its apps and workflows). No page change, back button works. Owners and managers additionally see "Open in Traffic Explorer" pre-filtered to the unit; executives are not sent there by default.
-- **Plain names** with the CLEAR letter on hover (D12). Every red/amber says which target it missed.
-- **Phone-friendly:** cards stack, tables become top-3 lists with "more", Ask is full-screen. Executives read this on a phone.
+Home replaces the current landing page with a **grid of widgets**. Everyone starts from a default layout for their role, and anyone can change their own.
+
+- **No left-hand navigation** (D12). The header carries the scope ("All my orgs · 3" with an org switcher, as on GitHub), a period switch, **Customize**, **Follow-ups (n)** and **✦ Ask**. Analysis, Governance, Reports and Experiments stay in the app header as today.
+- **Page scope and period apply to every widget** unless the widget is pinned to a fixed scope (for example, "Engineering only" on a CEO's page). Drilling into a card, row or issue re-scopes the whole page (breadcrumb: Acme › Sales › Demo). The back button works.
+- **Every widget drills somewhere.** Its title and rows link to the full report it summarises (table below). Executives drill to report pages, not Traffic Explorer. Owners and managers also get "Open in Traffic Explorer" at the bottom level.
+- **Plain names** with the CLEAR letter on hover (D12). Every red or amber says which target it missed.
+- **Phone:** a single column in layout order. Tables become top-3 lists with "more", and Ask is full screen.
+
+**Widget catalogue.** Sizes are on a 12-column grid: S = 3, M = 6, L = 12.
+
+| Widget | Shows | Drills to | Default for | Size |
+|---|---|---|---|---|
+| **Needs your attention** | the top five problems against targets, LLM and tool alike (§8.2, §9.5), with Forward | the unit, then the report for that metric | everyone | L |
+| **Your orgs / teams** | one card per child unit: owner, spend and trend, the scores, Tools uptime, status pills | re-scopes Home to that unit | exec, owner | L |
+| **CLEAR scorecard** | the six top-5 tables. Rank switch: orgs / teams / apps / workflows / **tools**. Order switch: needs attention / best | Reports ▸ CLEAR Scorecard; the Tools view drills to Analysis ▸ Tools | exec, owner, manager | L |
+| **Data safety** | sensitive data that came in, counted once (§9.5 attestation), **split by where it came from: prompts vs tool results**. Shows data types, trend, top apps and top tools, and the share of hits under a redact policy vs log-only | prompts: Reports ▸ What's leaking. Tool results: Analysis ▸ Tools | exec, owner, manager | M |
+| **Tool health** | calls that worked, p95, servers down, unused tools, coverage (proxy vs gateway only) | Analysis ▸ Tools | exec (compact), owner, manager | M |
+| **Spend and forecast** | month to date against budget, projected month end, by child unit; spend-cap state | Reports ▸ Cost | exec, owner, billing | M |
+| **Savings** | what caching, payload reduction and routing saved this period, in dollars, next to spend | Reports ▸ Caching, Reports ▸ Model economics | exec, owner | S |
+| **Adoption** | active people, apps and agents, their trend, and the share of the org's people using AI this period | Analysis ▸ Activity (scoped version) | exec, owner | S |
+| **Vendor mix and risk** | spend share by vendor and model, single-vendor dependency, vendor uptime | Reports ▸ Provider Quality, Reports ▸ Reliability | exec (CIO) | S |
+| **Compliance posture** | policy bundles on (HIPAA, PCI...), enforced vs log-only, NIST AI RMF coverage, open high-severity findings | Governance ▸ Policies, Reports ▸ NIST AI RMF | exec (CIO), owner | S |
+| **Visibility** | the share of known AI use AIQG can see: gateway traffic vs imported traces vs known-but-unrouted apps | Reports ▸ Imported Traces | exec (CIO) | S |
+| **Follow-ups** | open items you forwarded or received, overdue first | Follow-ups | everyone | S |
+| **Recommendations** (P8) | cheaper or more capable model, raise limits, caching, tighten policy, each with estimated savings or risk (§14.1) | the recommendation detail | exec, owner | M |
+| **My usage** | the viewer's own spend and requests (Plan #11) | Settings ▸ My usage | member | S |
+| **Pinned answer** | any ✦ Ask answer pinned to Home; re-runs on the page period | the answer as a view | — (added by pinning) | S or M |
+
+**Default layouts** (the system defaults; an org owner may save their own for the org, below):
+
+| Role | Layout, in order |
+|---|---|
+| **Executive**: owner, admin or billing on several orgs (the CEO/CIO view) | Needs your attention · Your orgs · Spend and forecast + Data safety · CLEAR scorecard · Tool health + Savings + Adoption · Compliance posture + Vendor mix + Visibility · Follow-ups |
+| **Org owner** | Needs your attention · Your teams · Spend and forecast + Data safety · CLEAR scorecard · Tool health + Savings · Follow-ups |
+| **Team manager** | Needs your attention · Data safety + Tool health · CLEAR scorecard (apps) · Follow-ups |
+| **Member** | My usage · their team's card · Follow-ups |
+
+**Customize.** **Customize** turns on edit mode:
+- drag to reorder, or move up and down with the keyboard;
+- set the size (S, M or L) or remove a widget;
+- **+ Add widget** opens the catalogue, grouped Problems / Money / Safety / Quality / Tools / Adoption / Pinned;
+- **Reset to default**.
+
+An org owner also sees **Save as default for <org>**. Their members then start from that layout instead of the system one, and can still change their own. A widget never shows data outside the viewer's scope. Widgets that need person rows follow D11. A widget the viewer may not use is not offered.
+
+**Storage.** One table, newest wins, following the `sdlc_workflow_name` override pattern:
+
+```sql
+CREATE TABLE aiqg.home_layout (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID NOT NULL,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('user','org_default')),
+  owner_key  TEXT NOT NULL,            -- Keycloak sub, or the org's tenant id
+  layout     JSONB NOT NULL,           -- [{"widget":"data_safety","w":6,"scope":null,"settings":{}}...]
+  layout_version INT NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by TEXT NOT NULL
+);
+CREATE INDEX ON aiqg.home_layout (tenant_id, owner_kind, owner_key, created_at DESC);
+```
+
+- **Resolution:** the user's newest row, else the org default, else the system default for the viewer's role.
+- **System defaults live in code**, versioned, so a new widget can be added to defaults without a migration.
+- **`aiqg.home_pin` is absorbed:** a pin is a widget entry `{"widget":"ask_pin","settings":{"pin_id":...}}`, and the pin table keeps only the saved question.
+- **Unknown widget types** in a stored layout are skipped, not errors, so removing a widget never breaks a page.
+- **UI state:** layout and edit mode live in a Redux slice `homeLayout`, per the repo rule.
+
+**Data.** `GET /api/v1/home?scope=&period=&widgets=a,b,c` returns one section per requested widget, so the page still makes one call. Each widget's section is computed by the same query as its drill target, so the two numbers always agree.
 
 ### 11.2 Other surfaces
 
@@ -713,8 +780,8 @@ The same "Needs your attention" list and org cards, emailed weekly to owners thr
 | **P3 Infer/confirm** | §7 proposer + per-tenant ticket-prefix map; AIQG-71 on the same machinery | be | after P2 |
 | **P4 Rollups + targets** | §9.1 aggregate (cardinality measured first), §8 targets and status, `/home`, `/metrics/units`, data-safety-by-app query | aether-shared, be | after P1, P2 |
 | **P4-Tools** | §9.5: fix MCP-14 first; scan-once attestation in a shared store (gateway half can ship first, GK-5); proxy accepts `TAS-Auth` + baggage and resolves it; `tool_call.v1` events from proxy and gateway (tool names, `tool_call_id`, outcome); server probes; catalogue snapshot; `tool_call_1h`; `mcp_server` member kind; tool targets | tas-mcp, router, tas-spark-jobs, aether-shared, be | MCP-14 alone, yes; the rest after P1, P2 |
-| **P5 Home + Settings** | §11.1 new Home (replaces `HomePage.tsx`), §11.2 Settings ▸ Organization, token dialog, unit filters | ui | after P2-P4 |
-| **P5-Tools** | §11.2 **Tools** page and the Home additions in §11.1 | ui | after P4-Tools, P5 |
+| **P5 Home + Settings** | §11.1 new Home as widgets (replaces `HomePage.tsx`): widget framework, the catalogue minus tool and P8 widgets, system default layouts; ship with defaults first, then Customize, org defaults and `home_layout`; §11.2 Settings ▸ Organization, token dialog, unit filters | ui | after P2-P4 |
+| **P5-Tools** | §11.2 **Tools** page; Tool health widget; tool-results half of the Data safety widget; Tools in the CLEAR rank switch | ui | after P4-Tools, P5 |
 | **P6 Forward + Follow-ups** | §9.3 tables, email, Follow-ups page; §11.3 weekly digest if agreed | be, ui | after P5 |
 | **P7 ✦ Ask** | §9.4: the extra Plan #20 tools, the model loop through our gateway, viewer scoping, provenance, pins | be (data-mcp + dashboard), ui | after P4; depends on Plan #20 Phase 1 |
 | **P8 Recommended actions** (future) | §14.1 | be, ui, router | after P4, P6 |
