@@ -25,9 +25,9 @@ reuses: aiqg.report_snapshot (frozen snapshot on Forward), aiqg.digest_subscript
 extends: tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md (adds the human actor; keeps its header contract and ladder)
 vocabulary_from: tas-session-corpus/docs/DESIGN-continuous-labeling.md §8.3-8.8, tas-session-corpus/docs/LABELS.md
 wireframe: https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb
-version: 0.4.0
+version: 0.5.0
 last_updated: 2026-11-18 (rev 5: teams are Aether's Team, extended; AIQG keeps a time-stamped copy. rev 4: an org IS a tenant, as in Aether; AIQG orgs link to Aether Organizations; multi-org viewer. rev 3: GitHub-style many-to-many structure, owners + targets, executive Home, Forward + Follow-ups, Ask)
-status: proposed (D1-D14 decided with John 2026-11-18)
+status: proposed (D1-D14 decided with John 2026-11-18; D15 2026-11-19)
 plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
 ```
 
@@ -66,6 +66,7 @@ The primary reader of Home is a CEO or CIO. They will rarely open Traffic Explor
 | D13 | **AIQG orgs link to Aether Organizations; the models must not drift.** Each AIQG account (tenant) records the Aether Organization or personal user it belongs to (§5.0). One org, one id, in both products. | John, 2026-11-18 |
 | D14 | **Aether is the source of truth for orgs, teams and membership.** Aether's existing `Team` is extended (nesting, joining, archive, change events) rather than duplicated, so agent-builder, notebooks and AIQG share one team model. AIQG keeps an append-only, time-stamped copy for attribution and owns only what is AIQG's: token placement, targets, follow-ups, workflow owners, baggage-key mappings. Amends D1. | John, 2026-11-18 |
 | D12 | **Plain language on Home.** Spend, Speed, Quality, Data safety, Uptime, Overall; the CLEAR letter is shown on hover, not as the label. **No left-hand navigation on Home**: it keeps today's clean layout, with Ask and Follow-ups in the header. | John, 2026-11-18 |
+| D15 | **An agent belongs to its owner, inside a tenant; "public" is a visibility choice, not a change of owner.** agent-builder already scopes every agent by `tenant_id` + `owner_id` + `space_id`, and the owner can make it public in the UI. AIQG follows that: an agent's org is its tenant and its team is its owner's default team in that org (§5.2), unless someone places it on a team explicitly. Making an agent public changes who can *use* it, never who it is attributed to or who pays: a run is billed to the tenant of the token that made it (D5). Answers Q10. | John, 2026-11-19 |
 
 ### Not this
 
@@ -605,12 +606,13 @@ The same "Needs your attention" list and org cards, emailed weekly to owners thr
 - **Ask** never returns what the viewer's Home would not show (§9.4); questions and answers are logged with the viewer's `sub` for audit, and answers store ids and aggregates, not prompt text.
 - **Follow-up notes** are free text written by the sender; they are not sent to the model and not indexed.
 - No text is stored by the proposer; evidence is ids and counts.
-- Two admin-surface gaps found during this survey are in scope as phase **P2a** (§13), because §10 and §11 build on the same admin surface:
+- Two admin-surface gaps found during this survey (F1, F2) are in scope as phase **P2a** (§13), because §10 and §11 build on the same admin surface:
 
 | # | Finding | Cite (aiqg-dashboard-be, `origin/main` `c687e1c`) | Why it blocks this plan | Fix |
 |---|---|---|---|---|
 | F1 | `GET /admin/users` lists **every user in the realm**, with no tenant filter. It is admin-gated, but `aiqg-admin` is a realm role, so an admin of one tenant sees the users of every tenant. Harmless while John is the only tenant admin; a cross-tenant exposure once a second tenant has one. | `internal/handlers/admin.go:109-166` (`listUsers`); `internal/keycloak/admin.go` `ListUsers` | The member picker, Forward's To/Cc and the Unassigned list need a user list; reusing this one would show other tenants' people in a tenant's org tree. | Filter on the Keycloak user attribute `tenant_id` (already read for auditors, `internal/keycloak/admin.go:62-70`) to the caller's JWT tenant; a platform-wide list only for a separate platform-operator role. Test: two tenants, an admin of A sees none of B. |
 | F2 | Realm-role **grant and revoke are written to zap logs only**, not to `aiqg.audit_log`. The SDLC auditor grant/revoke *is* audited (`sdlc_auditors.go:256,282`), so the two admin paths disagree. | `internal/handlers/admin.go:191,244` | §5 requires every org write to be audited fail-closed; admin *role* changes decide who may make those writes, so leaving them unaudited makes the org audit trail incomplete at its root. Logs also age out (Loki 30 days). | Append `admin.role.granted` / `admin.role.revoked` (actor, target sub, role, tenant) to `audit_log` in the same request, fail-closed like §5; document both actions in `audit-log-entry.md`. |
+| F3 | **`is_public` is platform-wide, not org-wide.** The read rule is `(owner_id = ? AND space_id = ?) OR is_internal = true OR is_public = true`, with no tenant condition, so an agent a user marks public is readable, runnable and copyable by every signed-in user of every tenant. Today only the 16 system agents (`tenant_id = 'system'`) are public, so nothing has leaked; the first customer who clicks "make public" shares their system prompt and notebook bindings with every other org. Writes are already owner-only (AB-5). | tas-agent-builder `services/impl/agent_service_impl.go:38-43` (read), `:425-427` (duplicate), `:473-474` (list by space); live `agent_builder.agents`: 16 public+internal system agents, 2 private, 2026-11-19 | D4 makes orgs real tenants side by side; a one-bit public flag cannot say "my org" versus "everyone", and organisation-wide sharing is what a team lead will mean. | Replace the boolean with the visibility Aether's `Team` already uses: `private \| organization \| public`. `organization` adds `tenant_id = <caller's tenant>` to the read rule; `public` stays reserved for system and template agents, gated by an admin role. Migrate existing `is_public = true` rows to `public` (all are system) and default new shares to `organization`. Mirror the field on aether-be's `Agent` node. Separate change in tas-agent-builder; tracked as AB-6. |
 
 ---
 
@@ -665,9 +667,9 @@ Dynamic configuration (options such as window sizes, `max_tokens`, cache and red
 5. Should targets inherit from parent units by default? Proposed: no (§8.1).
 6. Weekly digest (§11.3): agree before P6.
 7. Who may create orgs: any signed-in person (as on GitHub and in Aether today), or only `aiqg-admin`?
-8. **D14** — source of truth for org membership and teams (recommended: Aether owns orgs and org roles; AIQG owns teams and everything below).
+8. ~~Source of truth for org membership and teams.~~ Decided as D14: Aether owns orgs, teams and membership.
 9. Should `viewer` team members see person-level rows on the team's Home, or only totals?
-10. Do agent-builder agents inherit their team from the creating user's default team, or must the creator pick one? (`Agent.team_id` is empty on all 23 agents today.)
+10. ~~Do agent-builder agents inherit their team from the creating user's default team?~~ Decided as D15: yes. An agent is scoped by tenant and owner; its team is the owner's default team unless placed. Sharing is visibility only (F3).
 
 ---
 
