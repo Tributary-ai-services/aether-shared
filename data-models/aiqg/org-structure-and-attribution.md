@@ -280,8 +280,8 @@ CREATE TABLE aiqg.team_member_history (
   id              BIGSERIAL PRIMARY KEY,
   tenant_id       UUID NOT NULL,
   aether_team_id  UUID,               -- NULL = org-level membership row
-  member_kind     TEXT NOT NULL CHECK (member_kind IN ('person','agent','user_key','source_app','repo')),
-  member_key      TEXT NOT NULL,      -- Keycloak sub | agent id | baggage user.id | source_app | repo
+  member_kind     TEXT NOT NULL CHECK (member_kind IN ('person','agent','user_key','source_app','repo','mcp_server')),
+  member_key      TEXT NOT NULL,      -- Keycloak sub | agent id | baggage user.id | source_app | repo | MCP server id
   role            TEXT,               -- Aether role name, persons only
   op              TEXT NOT NULL CHECK (op IN ('add','remove')),
   valid_from      TIMESTAMPTZ NOT NULL,
@@ -324,7 +324,7 @@ CREATE TABLE aiqg.token_placement (
   id          BIGSERIAL PRIMARY KEY,
   tenant_id   UUID NOT NULL,                       -- = the token's tenant
   token_id    UUID NOT NULL REFERENCES aiqg.token(id),
-  team_id     UUID                             -- Aether team id,   -- a team of that tenant; NULL = "(no team)" / default-team fallback
+  team_id     UUID,                            -- Aether team id of that tenant; NULL = "(no team)" / default-team fallback
   valid_from  TIMESTAMPTZ NOT NULL,
   set_by      TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -337,7 +337,7 @@ CREATE TABLE aiqg.person_default_team (
   tenant_id   UUID NOT NULL,
   person_sub  TEXT NOT NULL,
   org_tenant_id UUID NOT NULL,                     -- the org (tenant) this default applies in
-  team_id     UUID                             -- Aether team id,   -- NULL = cleared
+  team_id     UUID,                            -- Aether team id; NULL = cleared
   valid_from  TIMESTAMPTZ NOT NULL,
   set_by      TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -395,7 +395,7 @@ CREATE TABLE aiqg.workflow_owner (
   id           BIGSERIAL PRIMARY KEY,
   tenant_id    UUID NOT NULL,
   workflow_id  TEXT NOT NULL,          -- sdlc_workflow.workflow_id
-  unit_id      UUID                             -- Aether team id,   -- an org or a team; NULL = cleared
+  unit_id      UUID,                            -- Aether team id, or the org's tenant id; NULL = cleared
   source       TEXT NOT NULL CHECK (source IN ('admin','owner','proposal_accepted')),
   set_by       TEXT NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -418,7 +418,7 @@ CREATE TABLE aiqg.org_proposal (
   tenant_id    UUID NOT NULL,
   target_kind  TEXT NOT NULL,          -- a member_kind, 'token' (placement), or 'workflow'
   target_key   TEXT NOT NULL,
-  unit_id      UUID                             -- Aether team id,
+  unit_id      UUID,                            -- Aether team id
   rule         TEXT NOT NULL,          -- which rule proposed it
   confidence   TEXT NOT NULL CHECK (confidence IN ('high','medium','low')),
   evidence     JSONB NOT NULL,         -- ids and counts only, no text
@@ -454,7 +454,7 @@ Accepting a proposal writes the corresponding change: a team membership through 
 CREATE TABLE aiqg.org_target (
   id          BIGSERIAL PRIMARY KEY,
   tenant_id   UUID NOT NULL,
-  unit_id     UUID NOT NULL                    -- Aether team id (or the org's tenant id),
+  unit_id     UUID NOT NULL,                   -- Aether team id (or the org's tenant id)
   metric      TEXT NOT NULL CHECK (metric IN
               ('spend','speed','quality','data_safety','uptime','overall')),
   comparator  TEXT NOT NULL CHECK (comparator IN ('max','min')),
@@ -514,7 +514,7 @@ One endpoint serves Home so the page makes one call: `GET /api/v1/home?scope=<un
 CREATE TABLE aiqg.followup (
   id            UUID PRIMARY KEY,
   tenant_id     UUID NOT NULL,
-  unit_id       UUID NOT NULL                    -- Aether team id (or the org's tenant id),
+  unit_id       UUID NOT NULL,                   -- Aether team id (or the org's tenant id)
   metric        TEXT NOT NULL,               -- as org_target.metric, or 'other'
   title         TEXT NOT NULL,               -- the one-sentence issue
   snapshot_id   UUID NOT NULL REFERENCES aiqg.report_snapshot(id),  -- frozen numbers
