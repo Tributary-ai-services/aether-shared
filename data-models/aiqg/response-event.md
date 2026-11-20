@@ -13,7 +13,7 @@ kafka_topic: tas.aiqg.response.v1
 storage: TimescaleDB hypertable aiqg.response_events
 partition_key: complete_at
 primary_key: (response_event_id, complete_at)
-version: 1.0.0
+version: 1.1.0
 last_updated: 2026-05-31
 status: spec draft
 ```
@@ -141,6 +141,20 @@ Per [build-vs-reuse §7.2](./build-vs-reuse.md#72-clear-scoring-location--decide
 | `validity_passed` | bool | Yes | from scanner | `true` if structural validity check passed (JSON parse, tool-call schema match, code-fence balance, etc. — varies by workflow type). |
 | `groundedness_score` | numeric(3,2) | No | `null` | LLM-judge groundedness (0.00–1.00). Only present when `sampled_for_llm_judge = true` and a small/large judge call completed. See [build-vs-reuse §2.8](./build-vs-reuse.md#28-37--sampling-strategy). |
 | `sampled_for_llm_judge` | bool | Yes | `false` | Was this response selected by the stratified sampler? Sampling rate per [source-spec §3.8](./source-spec-v0.2.md): 100% deterministic, 5–10% small judge, 1% + triggered large judge. |
+
+#### Scan-Once (Plan #22 GK-5a, since gateway 5.119.0-rc.2, 2026-11-20)
+
+The gateway remembers, per tenant, what each inbound message's content produced when it was scanned (Redis key `gk:scan1:{tenant}:{sha256}:{profile}:{tier}:{ruleset}:{build}`, 24 h TTL refreshed on hit). Content remembered **clean** is not scanned again. Content remembered **with findings** is scanned again, so blocking and enforcement still act on it, but its findings are **not counted again**. **When `scan_once` is true, the inbound Assurance counts (`assurance_inbound_count`, `tag_*`, `nist_*`) count a finding once per (tenant, content, pattern), not once per turn.** Before this, a chat client's resent history was re-counted on every turn: a card pasted in turn 1 of a 10-turn conversation showed as 10 findings. Data-safety series therefore drop from 2026-11-20; split on `scan_once` when comparing across that date.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `scan_once` | bool | No | absent | `true` when the scan-once store was consulted successfully for this request. Absent when it was off, the request had no tenant, or the store failed (fail-safe: then every message was scanned and counted, as before). |
+| `scan_messages` | int | No | absent | Messages eligible for the inbound scan (every role except `assistant`, unless `trust: pre_scanned`). |
+| `scan_skipped` | int | No | absent | Of those, how many were not rescanned because they were remembered clean. |
+| `attestation_hits` | int | No | absent | How many were remembered at all (clean or with findings). |
+| `scan_ms` | float | No | absent | Wall time spent scanning, excluding the store lookup (20 ms budget). |
+
+On the Loki line, `scan_messages` and `scan_ms` are promoted whenever the inbound scan ran, and `scan_once`, `scan_skipped` and `attestation_hits` only when the store was used. The Kafka payload carries all five whenever non-zero.
 
 #### Payload Retention
 
@@ -663,6 +677,7 @@ If `account.compliance_hold = true`, the retention policy on `aiqg.response_even
 | Version | Date | Change | Rationale |
 |---|---|---|---|
 | 1.0.0 | 2026-05-31 | Initial spec draft. Hypertable `aiqg.response_events`, CloudEvent type `com.tas.aiqg.response.v1`, topic `tas.aiqg.response.v1`. CLEAR scores as `smallint`. | Day-1 AIQG MVP per [build-vs-reuse](./build-vs-reuse.md) §9 phasing. |
+| 1.1.0 | 2026-11-20 | Added `scan_once`, `scan_messages`, `scan_skipped`, `attestation_hits`, `scan_ms` (§2, Scan-Once). Inbound Assurance counts are once per conversation when `scan_once` is true. | Plan #22 GK-5a: re-scanning the resent history on every turn multiplied every finding by the conversation length (tas-llm-router#278, #280, #281). |
 
 ### Non-Breaking Change Posture
 
