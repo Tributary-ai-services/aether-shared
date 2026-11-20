@@ -354,16 +354,28 @@ data:
         - source_labels: [__meta_kubernetes_namespace]
           target_label: namespace
 
+      # The MCP federation proxy (MCP-16). This job used to watch namespace
+      # `tas-mcp` for a Service named `tas-mcp-server`; neither exists, so it
+      # had zero targets for as long as it was configured, and the 16-day
+      # MCP-14 outage (2026-11-03..19) produced no metric anyone could alert
+      # on. Production is the `prod-` kustomize prefix in `tas-mcp-prod`, and
+      # /metrics is served on the health port (8083), not the API port.
       - job_name: 'tas-mcp-server'
         kubernetes_sd_configs:
         - role: endpoints
           namespaces:
             names:
             - tas-mcp
+            - tas-mcp-prod
         relabel_configs:
         - source_labels: [__meta_kubernetes_service_name]
           action: keep
-          regex: tas-mcp-server
+          regex: (.+-)?tas-mcp-health
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: health
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
         - source_labels: [__meta_kubernetes_service_name]
           target_label: service
         - source_labels: [__meta_kubernetes_namespace]
@@ -1020,6 +1032,95 @@ data:
                 above cannot fire whatever the providers are doing. Either the
                 gateway is not being scraped or the metric was renamed.
 
+  tas-mcp-alerts.yml: |
+    groups:
+      - name: tas_mcp_federation
+        interval: 60s
+        rules:
+          # MCP-14 (2026-11-03..19): a NetworkPolicy cut the production proxy off
+          # from its Redis registry and 11 of its 12 servers. It logged ~33,000
+          # `redis set: ... connection refused` lines a day for 16 days and
+          # nothing told anyone, because tas-mcp exported no metric and this
+          # job had no targets. These rules are the alerting half of the fix.
+
+          # The registry is the proxy's source of truth for which servers
+          # exist. When it is unreachable, registrations from the operator
+          # fail and new replicas start with an empty federated set.
+          - alert: TasMcpRegistryUnreachable
+            expr: sum by (namespace) (rate(tas_mcp_registry_errors_total[5m])) * 60 > 10
+            for: 10m
+            labels:
+              severity: critical
+              service: tas-mcp
+              component: registry
+            annotations:
+              summary: "tas-mcp cannot reach its server registry (Redis)"
+              description: >
+                {{ $value | printf "%.0f" }} registry errors a minute in
+                {{ $labels.namespace }} for 10m. Break down by kind with
+                `sum by (op, kind) (rate(tas_mcp_registry_errors_total[5m]))`.
+                kind="connection_refused" from every pod is the MCP-14 shape:
+                check the egress rules in tas-mcp/k8s/base/networkpolicy.yaml
+                (6379 to tas-shared) before anything else.
+
+          # A federated server the proxy cannot call. Client cancellations are
+          # the caller giving up, not the server failing, so they are excluded.
+          - alert: TasMcpUpstreamErrors
+            expr: sum by (namespace, server_id) (rate(tas_mcp_upstream_errors_total{kind!="canceled"}[5m])) * 60 > 10
+            for: 10m
+            labels:
+              severity: critical
+              service: tas-mcp
+              component: federation
+            annotations:
+              summary: "tas-mcp calls to {{ $labels.server_id }} are failing"
+              description: >
+                {{ $value | printf "%.0f" }} failed calls a minute to
+                {{ $labels.server_id }} for 10m. Kinds:
+                `sum by (kind) (rate(tas_mcp_upstream_errors_total{server_id="{{ $labels.server_id }}"}[5m]))`.
+                connection_refused or timeout means the proxy cannot reach
+                the server (NetworkPolicy, or the pod is down in
+                tas-mcp-servers); http_status or jsonrpc means it answered
+                and refused the call.
+
+          # The rate rule above needs traffic. A server that is called rarely
+          # and fails every time never reaches 10 a minute, so also alert on
+          # the error ratio once there is enough traffic to mean something.
+          - alert: TasMcpUpstreamMostlyFailing
+            expr: |
+              (
+                sum by (namespace, server_id) (increase(tas_mcp_upstream_requests_total{outcome="error"}[30m]))
+                / sum by (namespace, server_id) (increase(tas_mcp_upstream_requests_total[30m]))
+              ) > 0.5
+              and sum by (namespace, server_id) (increase(tas_mcp_upstream_requests_total[30m])) >= 5
+            for: 15m
+            labels:
+              severity: warning
+              service: tas-mcp
+              component: federation
+            annotations:
+              summary: "Most tas-mcp calls to {{ $labels.server_id }} fail"
+              description: >
+                {{ $value | humanizePercentage }} of calls to
+                {{ $labels.server_id }} failed over the last 30m (at least 5
+                calls). See TasMcpUpstreamErrors for how to read the kinds.
+
+          # Without this, "no errors" and "no metrics" look the same, which is
+          # exactly how the scrape job sat at zero targets unnoticed.
+          - alert: TasMcpMetricsMissing
+            expr: absent(up{job="tas-mcp-server", namespace="tas-mcp-prod"} == 1)
+            for: 15m
+            labels:
+              severity: warning
+              service: tas-mcp
+              component: observability
+            annotations:
+              summary: "Prometheus is not scraping the production tas-mcp proxy"
+              description: >
+                No healthy `tas-mcp-server` target in tas-mcp-prod for 15m.
+                Either every proxy pod is down, the image predates /metrics on
+                :8083 (MCP-16), or the scrape job's Service match no longer
+                fits (it keeps `(.+-)?tas-mcp-health`, port `health`).
   llm-router-availability-alerts.yml: |
     groups:
       - name: llm_router_availability
