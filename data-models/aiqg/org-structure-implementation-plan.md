@@ -43,6 +43,12 @@ It splits the work into five waves. Each wave ends with a milestone you can see 
 - **Verifying:** read logs through Loki, never `kubectl logs`. Use `--cacert` with the private CA, never `-k`.
 - **Backlog:** when a PR merges, update `BACKLOG.md` and the published backlog artifact in the same session, then run `sync-to-repo.sh`.
 - **Tests:** a phase is not done while any test fails.
+- **Match live first** (added 2026-11-19). `kubectl apply -k` applies the whole tree, not the line a PR changed, so any gap between main and the cluster ships along with the fix. On 2026-11-19, `kubectl diff` of main against the cluster found three trees where that would do harm (W0.0). So any PR that changes a deployment tree:
+  1. **Starts with a match-live commit.** It changes main to describe what is running, with no behaviour change, and is proven by `kubectl diff` exiting **0**. Exit 2 means the tree could not be evaluated. That is not clean, and it hides drift, so resources whose CRDs are not installed go into an optional overlay first.
+  2. **Then makes the real change.** `kubectl diff` now shows only that change, and the PR description includes the output.
+  3. **Applies only that output**, after merge, and confirms the next `kubectl diff` exits 0.
+
+  A tree with cosmetic drift only (a digest written as `tag@digest`, env order, labels) still gets the match-live commit. Doing so makes the next PR's diff readable.
 
 ## 3. Dependency graph
 
@@ -112,10 +118,20 @@ flowchart LR
 
 ## 5. Wave 0: stop the bleeding (start now; independent)
 
+### W0.0 Match-live inventory (found 2026-11-19)
+
+| Tree | What applying main would do today | Match-live commit | Before |
+|---|---|---|---|
+| `tas-mcp/k8s/overlays/prod` | It would roll 5 pods onto `:latest` (live is `obs-20260817`, digest `e2dffe1a…`). It would create a public Ingress for `api/grpc.tas-mcp.com` with `letsencrypt-prod`. It would drop four port-8082 ingress rules that were patched in by hand on 2026-02-06. And it cannot be diffed at all, because the VPA and ServiceMonitor CRDs are not installed. | Pin the running digest. Remove the Ingress. Carry the 8082 rules. Move the VPA and ServiceMonitor to an optional component. | W0.1 |
+| `tas-agent-builder/k8s` | It would move the Deployment and the model-migration CronJob to `:latest`. | Pin `spaceiso-892ff8f` and `agent-builder:model-fallback-20260427211530` as running. | W0.3 |
+| `tas-mcp-servers/k8s` | It would remove `MCP_COMMAND` from the kafka-mcp bridge, which breaks that server. It would move podcast-mcp from `v2.2.1` to `1.0.0`. The rest is labels and the `BRIDGE_VERSION` env var. | Restore `MCP_COMMAND`. Decide which podcast-mcp tag is intended. Match labels and env. | T.4 |
+| aiqg-dashboard-be, aiqg-ui, tas-llm-router, aether-be | Cosmetic only. | Folded into each tree's first plan PR. | that PR |
+
 ### W0.1 MCP-14: the proxy can reach its servers again
 
 - **Repo / branch:** `tas-mcp`, `fix/mcp-14-netpol-egress`
-- **Change:**
+- **Commit 1, match live** (W0.0): `kubectl diff` exits 0.
+- **Commit 2, change:**
   - `k8s/base/networkpolicy.yaml`: allow egress to namespace `tas-mcp-servers` on any TCP port, and to `tas-shared` Redis on 6379.
   - Allow by namespace selector, not port list. The port list is what broke.
 - **Alerting:**
@@ -143,6 +159,7 @@ flowchart LR
 
 ### W0.3 AB-13: agent visibility `private | organization | public`
 
+- **Match live first** (W0.0): the first commit pins the images that are running now.
 - **Repo / branches:**
   - `tas-agent-builder`, `feat/ab-13-agent-visibility`
   - `aether`, `feat/agent-visibility-select`
@@ -284,7 +301,7 @@ This wave assumes W0.1 (MCP-14), W0.4 (GK-5a) and W0.5 (Q11) are done.
 | T.1 | tas-mcp `feat/proxy-caller-identity` | The proxy reads `TAS-Auth` and `baggage`, resolves the token through `/internal/auth/validate` with a 60 s cache, and carries the identity in context. Mode `observe`: a call without a token is served as `(unattributed)`. Refusal is a later per-tenant setting (Q12). |
 | T.2 | tas-mcp `feat/tool-call-events` | Emit `com.tas.aiqg.tool_call.v1` from the federation call path: server, tool, duration, outcome, result bytes and tokens, reduced bytes, and findings by category (taken from the G2 scan, not a second scan). Uses aether-shared `go-events`. Add Prometheus histograms `tas_mcp_tool_call_seconds{server_id,tool,outcome}`. |
 | T.3 | tas-mcp `feat/gk-5b-proxy-attest` | Write an attestation for each scanned tool result to the shared store, and for the *output* hash when the result was redacted. |
-| T.4 | tas-mcp `feat/server-probes` + tas-mcp-servers `feat/operator-reachability` | Probe each server every 60 s with `initialize` and `tools/list`. The gauge `tas_mcp_server_up{server_id}`. The `tools/list` result is snapshotted into the catalogue. The operator sets the CR condition `Reachable` from the probe; `Registered` alone no longer reads as healthy. |
+| T.4 | tas-mcp `feat/server-probes` + tas-mcp-servers `feat/operator-reachability` (match-live commit first, W0.0) | Probe each server every 60 s with `initialize` and `tools/list`. The gauge `tas_mcp_server_up{server_id}`. The `tools/list` result is snapshotted into the catalogue. The operator sets the CR condition `Reachable` from the probe; `Registered` alone no longer reads as healthy. |
 | T.5 | tas-llm-router `feat/tool-call-events` | From the request, the offered tool names and the schema byte size. From the response, `tool_calls` (one event per call, with `observed_by=gateway`). `no_result` is detected in the flow linker (`builder.go:291-346`) when the flow closes without the echoed `tool_call_id`. |
 | T.6 | aether-shared `feat/tool-call-timescale` | Timescale `009_tool_call.sql`: the raw hypertable `tool_call_events` (90-day retention, G-4), `tool_call_1h` (§9.5 group-by, with a p95 sketch via `percentile_agg`), and `tool_catalogue` (snapshot rows). Topic and schema docs. |
 | T.7 | tas-spark-jobs `feat/tool-call-events` | Route the new event type to `tool_call_events`. Join proxy and gateway rows on `tool_call_id`; when both exist, the proxy's fields win and `observed_by=both`. |
