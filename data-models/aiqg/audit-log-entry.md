@@ -9,8 +9,8 @@ service: aiqg-dashboard-be (writer of config events) + tas-llm-router (writer of
 model: AuditLogEntry
 database: TimescaleDB (hot) + MinIO/Parquet (cold archive ≥ 90d)
 table: aiqg.audit_log
-version: 1.0.0
-last_updated: 2026-05-31
+version: 1.0.1
+last_updated: 2026-11-20
 status: planned (new hypertable; non-breaking addition)
 spec_refs: source-spec-v0.2.md §2.4 (Assurance — accountable & transparent), §3.5.2 (dry-run + header override audit), §3.11 (customer-owned exports)
 plan_ref: build-vs-reuse.md §2.5 (dry-run), §2.10 (Gatekeeper attestation cache for HMAC signer), §4.5 (Loki sync via Alloy), §7.3 (strict Path A)
@@ -117,6 +117,9 @@ Append-only. Rows are **inserted exactly once** at the moment the event occurs a
 | `sdlc.auditor.granted` | no | warn | A tenant admin made a user an auditor of the tenant's SDLC labels (AIQG-72). The user may belong to another tenant; they keep it. Written when a membership is created or the `aiqg-auditor` realm role is granted. `resource_id`: the user's Keycloak id. `details`: `user_email`, `home_tenant`, `role_granted` |
 | `sdlc.auditor.revoked` | no | warn | A tenant admin ended a user's audit membership. The `aiqg-auditor` role is kept (it grants nothing without a membership). `resource_id`: the user's Keycloak id |
 | `sdlc.turn_evidence.viewed` | no | warn | A tenant admin or an auditor with a membership opened one turn's evidence in the audit workspace: its tasks, steps, redacted commands and outputs, and outcome chips (AIQG-72). Written **before** the evidence is returned; a view that cannot be audited is refused. `details`: `session_id`, `as_outside_auditor`, `redactor_version`, `segmenter_version`. Never contains the text |
+| `admin.role.granted` | no | critical | An admin granted an allowlisted AIQG realm role (for example `aiqg-admin`) to a user in Settings ▸ Admin (Plan #22 F2). Written **before** the Keycloak call and fail-closed: if the entry cannot be written, the role is not changed (`500 audit_write_failed`, or `503 audit_unavailable` with no audit store). `tenant_id` is the **target's** tenant, whose admin roster changed; for a target with no tenant (a platform operator only), it is the actor's. `resource_type`: `realm_user`. `resource_id`: the target's Keycloak id. `details`: `role`, `target_username`, `target_email`, `actor_tenant` |
+| `admin.role.revoked` | no | critical | An admin revoked an allowlisted AIQG realm role from a user. Same rules and `details` as `admin.role.granted`. The last holder of the gate role cannot be revoked (`last_admin`), and no entry is written for a refused revoke |
+| `admin.role.grant_failed` / `admin.role.revoke_failed` | no | warn | The matching `admin.role.granted` / `revoked` entry was written, but Keycloak then refused the change, so **the role did not change**. Best-effort: if this entry is missing too, the role is still unchanged. Read a `granted`/`revoked` entry together with any `*_failed` entry carrying the same `resource_id` and `role` just after it. `details`: as above plus `error` |
 
 #### `details` payload schemas (per `event_type`)
 Validated at the writer via a Go struct per event_type (marshalled to `jsonb`). Representative schemas:
@@ -604,6 +607,11 @@ SELECT add_continuous_aggregate_policy('aiqg.audit_event_counts_1h',
 - MVP scope: append-only insert/read; `prev_entry_id` and `signature` columns reserved but unused
 - Loki sync via Alloy added in `shared-monitoring` (build-vs-reuse §4.5)
 
+### 2026-11-20 — admin role actions (Plan #22 F2)
+- Adds `admin.role.granted`, `admin.role.revoked`, `admin.role.grant_failed` and `admin.role.revoke_failed` (aiqg-dashboard-be#252). Before this, realm-role grants and revokes from Settings ▸ Admin went to zap logs only, which Loki keeps for 30 days.
+- The writer is `internal/handlers/admin.go`. It writes the entry before the Keycloak call: Keycloak and Postgres share no transaction, and writing first means the failure case is a marked entry for a change that did not happen, never an unrecorded change.
+- No schema change: the implemented table stores this value in its free-text `action` column (migration `003_audit.sql`), and `details` in `metadata`.
+
 ### Planned: v1.1.0 (Phase 2)
 - Enable per-tenant hash chain (`prev_entry_id`, `signature` populated)
 - Add nightly chain-verification job to `tas-spark-jobs`
@@ -649,3 +657,4 @@ SELECT add_continuous_aggregate_policy('aiqg.audit_event_counts_1h',
 | Version | Date       | Author        | Change                  |
 |---------|------------|---------------|-------------------------|
 | 1.0.0   | 2026-05-31 | TAS Platform  | Initial spec draft      |
+| 1.0.1   | 2026-11-20 | TAS Platform  | `admin.role.*` actions (Plan #22 F2) |
