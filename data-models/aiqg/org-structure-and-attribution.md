@@ -6,7 +6,7 @@
 
 ```yaml
 service: aiqg-dashboard-be (structure model, membership, roles, targets, follow-ups, proposer, rollups, API) + tas-llm-router (token owner + baggage user on events) + aiqg-import (uploader on imported sessions) + aiqg-ui (new Home, Follow-ups, Ask, Settings ▸ Organization)
-models: Team (Aether, extended), TeamHistory, TeamMemberHistory, TokenPlacement, PersonDefaultTeam, WorkflowOwner, OrgTarget, OrgProposal, FollowUp, FollowUpEvent, HomePin
+models: Team (Aether, extended), TeamHistory, TeamMemberHistory, TokenPlacement, PersonDefaultTeam, WorkflowOwner, OrgTarget, OrgProposal, FollowUp, FollowUpEvent, HomePin, McpServerConfig, McpConnection
 databases:
   - Aether Team (Neo4j, aether-be) — EXTENDED: nesting, slug, archive, joining, change events (source of truth for teams)
   - aiqg.team_history, aiqg.team_member_history (Postgres, aiqg db) — NEW, append-only copy projected from Aether's change events
@@ -19,6 +19,7 @@ databases:
   - aiqg.followup, aiqg.followup_event (Postgres, aiqg db) — NEW
   - aiqg.home_layout (Postgres, aiqg db) — NEW (per-user and org-default Home layouts)
   - aiqg.home_pin (Postgres, aiqg db) — NEW (saved Ask question; placed on Home as a widget)
+  - aiqg.mcp_server_config, aiqg.mcp_connection (Postgres, aiqg db) — NEW: the MCP servers and encrypted connections an org configures (§9.6)
   - aiqg.token (Postgres) — EXTENDED: owner_sub, owner_email
   - aiqg.imported_trace, aiqg.sdlc_turn (Postgres) — EXTENDED: actor columns
   - aiqg.event_metrics (Timescale) — EXTENDED: token_id, owner_sub; NEW rollup event_metrics_actor_1h
@@ -26,9 +27,9 @@ reuses: aiqg.report_snapshot (frozen snapshot on Forward), aiqg.digest_subscript
 extends: tas-llm-router/docs/AIQG-AGENT-FLOW-ATTRIBUTION.md (adds the human actor; keeps its header contract and ladder)
 vocabulary_from: tas-session-corpus/docs/DESIGN-continuous-labeling.md §8.3-8.8, tas-session-corpus/docs/LABELS.md
 wireframe: https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb
-version: 0.7.0
-last_updated: 2026-11-18 (rev 5: teams are Aether's Team, extended; AIQG keeps a time-stamped copy. rev 4: an org IS a tenant, as in Aether; AIQG orgs link to Aether Organizations; multi-org viewer. rev 3: GitHub-style many-to-many structure, owners + targets, executive Home, Forward + Follow-ups, Ask)
-status: proposed (D1-D14 decided with John 2026-11-18; D15-D17 2026-11-19)
+version: 0.8.0
+last_updated: 2026-11-19 (rev 9: MCP servers are configured and managed per tenant in AIQG, through the proxy (D18, §9.6). rev 5: teams are Aether's Team, extended; AIQG keeps a time-stamped copy. rev 4: an org IS a tenant, as in Aether; AIQG orgs link to Aether Organizations; multi-org viewer. rev 3: GitHub-style many-to-many structure, owners + targets, executive Home, Forward + Follow-ups, Ask)
+status: proposed (D1-D14 decided with John 2026-11-18; D15-D18 2026-11-19)
 plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
 ```
 
@@ -70,6 +71,7 @@ The primary reader of Home is a CEO or CIO. They will rarely open Traffic Explor
 | D15 | **An agent belongs to its owner, inside a tenant; "public" is a visibility choice, not a change of owner.** agent-builder already scopes every agent by `tenant_id` + `owner_id` + `space_id`, and the owner can make it public in the UI. AIQG follows that: an agent's org is its tenant and its team is its owner's default team in that org (§5.2), unless someone places it on a team explicitly. Making an agent public changes who can *use* it, never who it is attributed to or who pays: a run is billed to the tenant of the token that made it (D5). Answers Q10. | John, 2026-11-19 |
 | D16 | **Tool calls get the same visibility as LLM vendor calls.** Failed, slow and never-called tools, and sensitive data in tool results, are measured per server and per tool, credited to the calling org and team, and owned by the team that runs the server. Two sources (the MCP proxy and the LLM gateway) emit one event type, so tools that bypass the proxy are still seen (§9.5). | John, 2026-11-19 |
 | D17 | **Home is a dashboard of widgets with a default per role, and each person can customize it.** The executive default puts Needs your attention, the org cards, the CLEAR scorecard, Spend, Data safety (prompts and tool results) and a CEO/CIO-level Tools (MCP) overview first. Every widget drills to its report, including Analysis ▸ Tools. An org owner may set the default for their org. Ask pins are widgets. | John, 2026-11-19 |
+| D18 | **MCP servers are configured and managed in AIQG, per tenant, through the proxy.** An org adds its own servers and connections (credentials) in Settings, as Aether users manage connections today, and the proxy injects the caller's connection on each call. Our shared servers stay operator-managed. Aether moves its tool calls onto the proxy, so both products share one registry and one connection store (§9.6). | John, 2026-11-19 |
 
 ### Not this
 
@@ -160,6 +162,7 @@ Many-to-many membership means a person's work cannot simply be summed into every
 | AIQG tenants | `tenant_id` is a Keycloak user attribute copied into the JWT; one `aiqg.account` row per tenant. Live: `65ea3247…` (our traffic, 631 tokens) and `a689c0b2…` (demo); 3 more users carry ids with no account row. **Neither id appears anywhere in Neo4j**: no AIQG tenant is linked to an Aether org or person | `internal/auth/keycloak.go:40-49`; `migrations/002_account.sql`; Keycloak + Postgres 2026-11-18 |
 | AIQG ↔ Space binding | `account.md` specifies a 1:1 `(:Space)-[:HAS_AIQG_ACCOUNT]->(:AIQGAccount)` edge via `Space.tenant_id`. **Never built**: 0 edges, 0 nodes; accounts live in Postgres. The doc is stale | `aiqg/account.md` §2, §5 |
 | MCP proxy | federation + Gatekeeper boundary scan (G2) built and enabled, log-only. **Since 2026-11-03 it reaches 1 of 12 servers:** its NetworkPolicy allows egress only on 53/80/443/8080, so Redis (6379) and servers on 8000/8087/8091/8092 are refused, about 33,000 errors a day, while every CR still says `Registered` (MCP-14). Findings are log lines only; no metrics, no events, no caller identity | tas-mcp `internal/scanning/install.go:61-82`, `k8s/base/networkpolicy.yaml`; Loki 2026-11-19 |
+| MCP configuration | **Nobody can configure an MCP server except with `kubectl`.** AIQG has no MCP screen or route. The proxy's admin API (register, get, delete, invoke, health; no update) authenticates no caller. A server record has **no tenant**, so the federated set is one global list, and credentials are one `AuthConfig` per server or a CR `secretRef`, never per customer. Servers come only from `FederatedMCPServer` CRs (12 live). Aether *does* let users manage connections (database CRUD, test, schema; MCP server list, tools, test) and injects the Space's connection on each call, but aether-be calls every server at its own URL, **bypassing the proxy** | tas-mcp `internal/federation/http_handlers.go:30-47`, `types.go` `MCPServer`/`AuthConfig`; operator `api/v1/federatedmcpserver_types.go:80`; aether-be `handlers/routes.go:685-705,814-821`, `handlers/mcp_handler.go` `injectConnectionParams`, `config/config.go:456-479`; cluster 2026-11-19 |
 | Tool calls at the gateway | `tools_declared` boolean; flows linked by echoed `tool_call_id`; **no tool names recorded** | router `pkg/aiqg/events/event.go:142-160,299`, `builder.go:291-346` |
 | Home page | four link cards (Live Monitor, Traffic Explorer, Governance, Reports) under the spend-cap and exposure banners; no left-hand nav | aiqg-ui `src/pages/HomePage.tsx` |
 | Imported sessions | `imported_trace` has **no uploader or token**; the code adapter sets no `Subject` | `migrations/015`, `039`; aiqg-import `adapter/code/code.go:181-182` |
@@ -627,6 +630,78 @@ Tracked as GK-5. Lands in P4-Tools (proxy writes, gateway reads), but the gatewa
 
 **What exists now.** The scan (G2), reduction and federation are built and enabled (`tas-mcp` PR #27; `SCANNING_ENABLED=true`, log-only). Findings are a zap log line with `server_id` and pattern counts (`internal/scanning/install.go:61-82`). There are no Prometheus metrics, no events, and no caller identity. The gateway records `tools_declared` as a boolean and links flows by `tool_call_id`, but records no tool names. Open: whether the gateway's prompt scan covers `role: tool` messages. If it does, findings in tool results are already caught but credited to the prompt rather than the tool. Check before P4-Tools.
 
+### 9.6 Configuring MCP servers (D18)
+
+**Why.** Aether lets users configure and manage tool connections. AIQG cannot. In Aether (Settings ▸ Developer Tools ▸ Data Sources) a user adds a database connection to their Space with its credentials, edits, tests and deletes it, and browses its schema. They can also list each MCP server's tools and test the server. On every tool call, aether-be injects the Space's connection into the request (`injectConnectionParams`). But aether-be calls each server at its own URL (`DBHUB_BASE_URL`, `NAPKIN_MCP_BASE_URL`, `POSTGRES_MCP_BASE_URL` and others, `config/config.go:456-479`). None of that traffic passes the proxy, so it gets no reduction, no boundary scan and no tool events under §9.5.
+
+AIQG has the proxy and nothing to manage it with:
+
+| Piece | State on `origin/main` (2026-11-19) | Cite |
+|---|---|---|
+| UI and API | None. aiqg-ui has no MCP screen, and aiqg-dashboard-be has no MCP route; only the demo-flow runner calls `/invoke` | aiqg-dashboard-be `internal/demoflows/runner.go:162` |
+| Proxy admin API | register, get, delete, invoke, health. **No update.** No caller authentication | tas-mcp `internal/federation/http_handlers.go:30-47` |
+| Server record | **No tenant**: one global set shared by every caller | `internal/federation/types.go` `MCPServer` |
+| Credentials | one `AuthConfig{type, config}` per server, or a CR `secretRef`. No per-customer credential, no per-call injection | `types.go` `AuthConfig`; operator `api/v1/federatedmcpserver_types.go:80` |
+| How a server is added | `kubectl apply` of a `FederatedMCPServer`. The operator registers it and re-registers it on drift every 2 minutes. It never removes a server it did not create | `pkg/controllers/federatedmcpserver_controller.go:31-114` |
+| Registry | Redis in production (`FEDERATION_REGISTRY=redis`), so replicas agree | `cmd/server/main.go:115`; live 2026-11-19 |
+| Live set | 12 CRs, all in `tas-mcp-servers`; `reduce` is true on 5, false on 1 and unset on 6 | cluster 2026-11-19 |
+
+So a customer cannot connect their own Salesforce, Qualtrics or database, and nothing an org owner sees on the Tools page can be changed from it.
+
+**Design.**
+- **Two kinds of server, one registry.** A **platform** server is one we run and share (today's 12). It is still declared as a CR and is read-only to tenants. A **tenant** server belongs to one tenant, which is one org (D5). It is created in AIQG, and only that tenant's tokens can see or call it. The proxy record gains `tenant_id` (NULL = platform), `owner_team_id` and `managed_by` (`operator` or `aiqg`). The operator touches only `managed_by = operator` rows, so its drift-healing never overwrites a server made in the UI, and AIQG cannot edit a CR-managed one.
+- **Connections, as in Aether.** A connection is one tenant's credentials and parameters for one server: a database DSN, an OAuth client for a CRM, an API key. A platform server can run with a tenant's own connection (for example `dbhub` with the customer's database). A tenant server has its own connection.
+  - Stored encrypted like BYOK provider keys (Plan #14: AES-GCM envelope, KEK in a Kubernetes Secret).
+  - Shown only as a label and the last four characters. Never returned to the browser, logged, or put on an event.
+  - The proxy resolves the caller's tenant from `TAS-Auth` (§9.5), loads that tenant's connection and injects it on invoke. This is the server-side form of Aether's `injectConnectionParams`.
+- **Who may change what.**
+  - Org owners and admins add, edit and delete tenant servers and connections. The owning team's manager edits their server's settings.
+  - Every change is audited fail-closed: `mcp_server.created|updated|deleted` and `mcp_connection.created|rotated|deleted`, with no secret in the metadata.
+  - Platform servers change only through their CRs, by `aiqg-platform-operator` (W0.2).
+- **The proxy's admin API requires authentication.** Register, update and delete require a service token that only aiqg-dashboard-be holds; the browser never calls the proxy. aiqg-dashboard-be checks the user's role and writes the audit row, then calls the proxy.
+- **Invoke follows §9.5's caller-identity rule, with one exception.** A call to a **tenant** server without a token that resolves to that tenant is refused, because serving it would hand one tenant's credentials to an unknown caller. The observe-only default still applies to platform servers.
+- **Settings managed in the UI, per server:**
+  - endpoint, protocol and auth type;
+  - `reduce`;
+  - **allowed tools**: an allowlist over the server's `tools/list`, so write tools can be switched off, as the EV pilot requires for CRM servers;
+  - owning team, health-check interval, and enabled or disabled.
+
+  **Test connection** runs `initialize` and `tools/list` with the tenant's connection and shows the tools found.
+- **Aether moves onto the proxy.** aether-be calls the proxy's invoke with the org's token instead of each server's URL. Its database connections become proxy connections, so both products share one store. Until then, Aether traffic stays invisible to §9.5, and the Tools page's coverage line says so.
+
+**Data.** The registry stays in the proxy, in Redis. AIQG keeps the system of record for what a user configured, so a flushed proxy registry can be rebuilt from it:
+
+```sql
+CREATE TABLE aiqg.mcp_server_config (
+  id             UUID PRIMARY KEY,
+  tenant_id      UUID NOT NULL,                 -- the org that owns it
+  server_id      TEXT NOT NULL,                 -- the proxy's id
+  owner_team_id  UUID,                          -- Aether team id
+  spec           JSONB NOT NULL,                -- endpoint, protocol, auth type, reduce, allowed_tools, health check
+  enabled        BOOLEAN NOT NULL DEFAULT true,
+  version        INT NOT NULL,
+  updated_by     TEXT NOT NULL,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, server_id)
+);
+
+CREATE TABLE aiqg.mcp_connection (
+  id             UUID PRIMARY KEY,
+  tenant_id      UUID NOT NULL,
+  server_id      TEXT NOT NULL,                 -- a platform or tenant server
+  label          TEXT NOT NULL,
+  ciphertext     BYTEA NOT NULL,                -- envelope-encrypted, as provider_credential
+  key_last4      TEXT,
+  created_by     TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  rotated_at     TIMESTAMPTZ,
+  deleted_at     TIMESTAMPTZ
+);
+```
+
+- A reconcile job pushes `mcp_server_config` to the proxy and reports drift, like the §5.1 history reconcile.
+- The proxy fetches a connection through an internal endpoint, `/internal/mcp/connections/resolve`, which accepts only the service token. It caches the connection in memory for 60 seconds and never persists it.
+
 ---
 
 ## 10. API (aiqg-dashboard-be)
@@ -652,6 +727,10 @@ Tracked as GK-5. Lands in P4-Tools (proxy writes, gateway reads), but the gatewa
 | GET / POST / DELETE | `/api/v1/home/pins` | the viewer |
 | GET / PUT | `/api/v1/home/layout` (resolved layout; PUT writes the viewer's own) | the viewer |
 | PUT / DELETE | `/api/v1/org/home-default` | org owner (fail-closed audit) |
+| GET | `/api/v1/mcp/servers` (platform servers plus the tenant's own, with health, tools and owning team) | org member |
+| POST / PUT / DELETE | `/api/v1/mcp/servers[/:id]` | org owner/admin; the owning team's manager for PUT (§9.6) |
+| POST | `/api/v1/mcp/servers/:id/test` | same as PUT |
+| GET / POST / DELETE | `/api/v1/mcp/connections[/:id]` (POST to an existing id rotates; secrets are write-only) | org owner/admin |
 
 Every write is tenant-scoped from the JWT and audited fail-closed (§5.1). The `/admin/users` fix (F1) is a precondition for every member picker.
 
@@ -737,6 +816,7 @@ CREATE INDEX ON aiqg.home_layout (tenant_id, owner_kind, owner_key, created_at D
 
 - **Tools** page, under **Analysis** at `/tools`, after Traffic Explorer (`src/config/nav.ts:64-74`), the tool-layer twin of Reliability and Provider Quality: a coverage line (calls via proxy vs seen by gateway only), the six metrics, a server table that drills to its tools, Never called, Data safety in tool results, and the server probe history. Scoped like Home: an org owner sees their org's calls across all servers; the MCP team also sees every caller of the servers it owns.
 - **Home** gains tool problems in Needs your attention, a **Tools** row on each org card, and **Tools** in the CLEAR table's Orgs / Teams / Apps / Workflows switch.
+- **Settings ▸ Tools (MCP)** (§9.6): platform and org servers with health and owning team; add or edit a server (endpoint, protocol, auth type, `reduce`, allowed tools picked from `tools/list`, owning team, enabled); **Test connection**; Connections with label, last four and **Rotate**. The Tools page links each server to its settings. Org owners and admins edit; members read.
 - **Follow-ups** page: To me / From me / Cc; state, reply-by, snapshot vs live.
 - **✦ Ask** panel: question box, suggested questions for the current scope, answer as text + table/chart, "How I got this", Pin / Show as view / Forward.
 - **Settings ▸ Organization**: org and team tree editor (nesting by drag), members with roles and a "since" date, token placement, default team, targets per unit, the **Unassigned** list (ordered by cost), and the proposal queue. Org owners see their orgs; admins see all.
@@ -781,6 +861,7 @@ The same "Needs your attention" list and org cards, emailed weekly to owners thr
 | **P3 Infer/confirm** | §7 proposer + per-tenant ticket-prefix map; AIQG-71 on the same machinery | be | after P2 |
 | **P4 Rollups + targets** | §9.1 aggregate (cardinality measured first), §8 targets and status, `/home`, `/metrics/units`, data-safety-by-app query | aether-shared, be | after P1, P2 |
 | **P4-Tools** | §9.5: fix MCP-14 first; scan-once attestation in a shared store (gateway half can ship first, GK-5); proxy accepts `TAS-Auth` + baggage and resolves it; `tool_call.v1` events from proxy and gateway (tool names, `tool_call_id`, outcome); server probes; catalogue snapshot; `tool_call_1h`; `mcp_server` member kind; tool targets | tas-mcp, router, tas-spark-jobs, aether-shared, be | MCP-14 alone, yes; the rest after P1, P2 |
+| **P4-Config** | §9.6: tenant-scoped registry, `managed_by`, update route and admin authentication on the proxy; the operator leaves non-CR servers alone; `mcp_server_config` + reconcile; encrypted `mcp_connection` + resolve endpoint + injection on invoke; Settings ▸ Tools (MCP); then aether-be calls through the proxy | tas-mcp, tas-mcp-servers, be, ui, aether-be, aether | after P2 and P4-Tools' caller identity (T.1); the Aether move last |
 | **P5 Home + Settings** | §11.1 new Home as widgets (replaces `HomePage.tsx`): widget framework, the catalogue minus tool and P8 widgets, system default layouts; ship with defaults first, then Customize, org defaults and `home_layout`; §11.2 Settings ▸ Organization, token dialog, unit filters | ui | after P2-P4 |
 | **P5-Tools** | §11.2 **Tools** page; Tools (MCP) overview and Tool health widgets; tool-results half of the Data safety widget; Tools in the CLEAR rank switch | ui | after P4-Tools, P5 |
 | **P6 Forward + Follow-ups** | §9.3 tables, email, Follow-ups page; §11.3 weekly digest if agreed | be, ui | after P5 |
@@ -826,6 +907,8 @@ Dynamic configuration (options such as window sizes, `max_tokens`, cache and red
 10. ~~Do agent-builder agents inherit their team from the creating user's default team?~~ Decided as D15: yes. An agent is scoped by tenant and owner; its team is the owner's default team unless placed. Sharing is visibility only (F3).
 11. Does the gateway's prompt scan cover `role: tool` messages? If so, tool-result findings already exist and only need crediting to the tool (§9.5).
 12. Should a call to the MCP proxy without a token be refused? Proposed: served and recorded as `(unattributed)` by default, refusal a per-tenant setting.
+13. May a tenant add an MCP server hosted outside our cluster (a vendor's remote endpoint, or one the customer runs)? Proposed: yes, HTTPS only, through a per-tenant egress allowlist on the proxy (§9.6).
+14. Which connection kinds ship first? Proposed: database DSN (as Aether has today, for `dbhub`) and OAuth client credentials (the CRM servers the EV pilot needs).
 
 ---
 
@@ -836,6 +919,7 @@ Dynamic configuration (options such as window sizes, `max_tokens`, cache and red
 - `tas-session-corpus/docs/LABELS.md` — turn and task definitions
 - [activity-reporting-and-onboarding.md](./activity-reporting-and-onboarding.md) — Plan #15, dashboard user vs gateway user
 - [token.md](./token.md), [request-event.md](./request-event.md), [response-event.md](./response-event.md), [audit-log-entry.md](./audit-log-entry.md)
+- [provider-credentials.md](./provider-credentials.md) — the BYOK envelope encryption that MCP connections reuse (§9.6)
 - `SPEND_GOVERNOR_DESIGN.md` §2.1 — the Tenant → Org → Team → User hierarchy; budgets can attach to these units
 - GitHub Docs, "About organizations", "About teams" (nested teams) — the structure model D4 follows
 - Wireframe: <https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb>

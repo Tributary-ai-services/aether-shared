@@ -1,7 +1,7 @@
 # Plan #22 Implementation Plan: Org Structure, Attribution, Tool Visibility and the Widget Home
 
 ```yaml
-design: data-models/aiqg/org-structure-and-attribution.md (v0.7.0, D1-D17)
+design: data-models/aiqg/org-structure-and-attribution.md (v0.8.0, D1-D18)
 wireframe: https://claude.ai/artifact/RC6zR1NmaYeNwKFVQxyCWb
 plan_ref: CLAUDE-PLANS-BACKLOG.md Plan #22
 status: proposed 2026-11-19
@@ -19,8 +19,8 @@ It splits the work into five waves. Each wave ends with a milestone you can see 
 | **0 Stop the bleeding** | M0 | The MCP proxy reaches all 12 servers again and alerts when it can't. No cross-tenant user list. Agent sharing can mean "my org". The gateway stops re-scanning the same message every turn. |
 | **1 Record who** | M1 | Every gateway event, imported session and SDLC turn says which token and which person sent it. |
 | **2 Structure** | M2 | TAS is an org in Aether with product teams. Tokens are placed in teams. Billed totals per team add up to the tenant total, to the cent. |
-| **3 Measure** | M3 | Per-team rollups, targets and statuses. Tool calls are events with outcome, speed and findings. Server health comes from probes, not CR status. |
-| **4 Show** | M4 | The new widget Home with role defaults and Customize. Analysis ▸ Tools. Settings ▸ Organization. |
+| **3 Measure** | M3 | Per-team rollups, targets and statuses. Tool calls are events with outcome, speed and findings. Server health comes from probes, not CR status. The proxy holds tenant-scoped servers and connections. |
+| **4 Show** | M4 | The new widget Home with role defaults and Customize. Analysis ▸ Tools. Settings ▸ Organization. Settings ▸ Tools (MCP), where an org adds, tests and manages its MCP servers and connections. |
 | **5 Act** | M5 | Forward and Follow-ups, the multi-org viewer, then ✦ Ask. |
 
 ## 2. Ground rules for every PR
@@ -39,6 +39,8 @@ It splits the work into five waves. Each wave ends with a milestone you can see 
   | `PROXY_AUTH_MODE=observe` | tas-mcp | resolving `TAS-Auth` without refusing anything |
   | `VITE_HOME_WIDGETS` | aiqg-ui | the new Home (old Home stays one click away) |
   | `MULTI_ORG_VIEWER` | aiqg-dashboard-be | per-request tenant selection |
+  | `MCP_TENANT_SERVERS` | tas-mcp | tenant-scoped servers and connection injection (P4-Config) |
+  | `AETHER_MCP_VIA_PROXY` | aether-be | Aether's tool calls through the proxy instead of direct (C.6) |
 - **Versions:** each image gets a semver bump in the repo's single version source, with OCI labels. No floating tags. Roll **both** aiqg-dashboard-be deployments, internal and public. Before rolling aiqg-ui, diff the baked `VITE_*` variables against the image it replaces.
 - **Verifying:** read logs through Loki, never `kubectl logs`. Use `--cacert` with the private CA, never `-k`.
 - **Backlog:** when a PR merges, update `BACKLOG.md` and the published backlog artifact in the same session, then run `sync-to-repo.sh`.
@@ -72,6 +74,7 @@ flowchart LR
     P3[P3 Proposer]
     P4[P4 Rollups + targets]
     P4T[P4-Tools]
+    P4C[P4-Config]
   end
   subgraph W4[Wave 4]
     P5[P5 Home + Settings]
@@ -95,6 +98,9 @@ flowchart LR
   Q11 --> P4T
   P4 --> P5
   P4T --> P5T
+  P2 --> P4C
+  P4T --> P4C
+  P4C --> P5T
   P5 --> P5T
   F12 --> P2b
   P2 --> P2b
@@ -103,7 +109,7 @@ flowchart LR
   P2b --> P7
 ```
 
-**Critical path:** P1 → P2-Aether → P2 → P4 → P5. Wave 0 runs alongside P1 and blocks none of it. P4-Tools can start once P1 and P2 merge and run in parallel with P4. P2b is needed only for the all-orgs Home. TAS has one org today, so P5 ships single-org first and the all-orgs cards follow P2b.
+**Critical path:** P1 → P2-Aether → P2 → P4 → P5. Wave 0 runs alongside P1 and blocks none of it. P4-Tools can start once P1 and P2 merge and run in parallel with P4. P2b is needed only for the all-orgs Home. TAS has one org today, so P5 ships single-org first and the all-orgs cards follow P2b. P4-Config needs only T.1 from P4-Tools (the proxy resolving `TAS-Auth`) and owning teams from P2.
 
 ## 4. Gaps found while planning (fixed in the design doc with this plan)
 
@@ -115,6 +121,7 @@ flowchart LR
 | G-4 | §9.5 names only the `tool_call_1h` aggregate, with no raw table under it. | Timescale migration 009 adds a raw `aiqg.tool_call_events` hypertable with 90-day retention, like `event_metrics`. |
 | G-5 | P1 omits tas-spark-jobs, yet the job is what maps response-event fields into `event_metrics`. | Added to P1 as WP1.4. |
 | G-6 | Counting each finding once changes historical Data-safety numbers: they drop when GK-5 turns on. | Charts mark the change date. Reports show "counted once since <date>". The old metric stays queryable for 30 days. |
+| G-7 | Nothing in the design let anyone configure an MCP server. The federated set is global, has no tenant, and changes only by `kubectl apply`. Aether lets users manage connections but calls servers directly, outside the proxy. | Design §9.6 and D18 added. P4-Config below. |
 
 ## 5. Wave 0: stop the bleeding (start now; independent)
 
@@ -314,6 +321,32 @@ This wave assumes W0.1 (MCP-14), W0.4 (GK-5a) and W0.5 (Q11) are done.
   - One email in a tool result, carried through a 10-turn conversation, is counted exactly once.
 - **Size:** XL (12 days). It splits cleanly: T.1 to T.4 in tas-mcp, T.5 in the router, T.6 to T.8 in data and API.
 
+### P4-Config: configuring MCP servers (§9.6, D18)
+
+Today a server is added only by `kubectl apply` of a `FederatedMCPServer`. The federated set has no tenant, and AIQG has no screen or API for it. Aether lets users manage connections, but it calls servers directly and bypasses the proxy. This package lets an org manage its own servers and connections in AIQG, through the proxy, and then moves Aether onto the same path. It needs T.1 (the proxy resolves `TAS-Auth`) and P2 (owning teams).
+
+| WP | Repo / branch | Change |
+|---|---|---|
+| C.1 | tas-mcp `feat/tenant-scoped-registry` | `MCPServer` gains `tenant_id` (NULL = platform), `owner_team_id`, `managed_by` (`operator` or `aiqg`), `allowed_tools` and `enabled`. Adds `PUT /api/v1/federation/servers/{id}`. Register, update and delete require the service token `MCP_ADMIN_TOKEN`. List and invoke return the platform servers plus the caller's own tenant's. A call to a tenant server without a token that resolves to that tenant gets 403. Tools outside `allowed_tools` are dropped from `tools/list` and refused on invoke. Behind `MCP_TENANT_SERVERS`. |
+| C.2 | tas-mcp-servers `feat/operator-managed-by` | The operator writes `managed_by=operator` and leaves every other row alone, so it never fights the UI. No CRD change. |
+| C.3 | aiqg-dashboard-be `feat/p22-mcp-config` | `062_mcp_config.sql` (`mcp_server_config`). `GET/POST/PUT/DELETE /api/v1/mcp/servers`, and `POST /mcp/servers/:id/test`, which runs `initialize` and `tools/list` through the proxy with the tenant's connection. Fail-closed audit `mcp_server.*`. A reconcile job pushes the table to the proxy every 5 minutes and on change, with the gauge `aiqg_mcp_config_drift`. |
+| C.4 | aiqg-dashboard-be `feat/p22-mcp-connections` + tas-mcp `feat/connection-injection` | `063_mcp_connection.sql`, encrypted with the BYOK envelope code (Plan #14). `GET/POST/DELETE /api/v1/mcp/connections`: secrets are write-only, and a POST to an existing id rotates. `/internal/mcp/connections/resolve` accepts the service token only. The proxy resolves the caller's connection on each invoke, caches it in memory for 60 s, and injects it the way the server expects: a header, OAuth client credentials, or a tool argument such as dbhub's DSN, as aether-be's `injectConnectionParams` does. Fail-closed audit `mcp_connection.*`, with no secret in the metadata. |
+| C.5 | aiqg-ui `feat/settings-mcp` | Settings ▸ Tools (MCP): platform and org servers with health and owning team; add or edit a server (endpoint, protocol, auth type, `reduce`, allowed tools picked from `tools/list`, owning team, enabled); Test connection; Connections with label, last four and Rotate. The Tools page (5T.1) links each server to its settings. Redux slice `mcpConfig`. |
+| C.6 | aether-be `feat/mcp-via-proxy` + aether | aether-be calls the proxy's invoke with the org's token instead of each server's URL. A one-shot job copies each Space's database connections into `mcp_connection` for its tenant. The old direct path stays behind `AETHER_MCP_VIA_PROXY=false` for one release. Aether's Data Sources page reads and writes through the AIQG API, so both products share one store. |
+
+- **Tests:**
+  - Two tenants: A's tenant server is invisible to B in list, `tools/list` and invoke (403), and A's connection is never injected into B's call.
+  - A platform server called by A and by B injects each tenant's own connection.
+  - A disallowed tool is missing from `tools/list` and refused on invoke.
+  - The operator re-registers a deleted CR-managed server and leaves an `aiqg` server untouched.
+  - A connection secret never appears in an API response, an audit row, a log line or an event. The test greps all of them.
+  - A failed audit write returns 500 and changes nothing.
+- **Verify:**
+  - In the TAS org, add a test Postgres connection to `dbhub`. Run one query from AIQG's Test connection and one through Aether. Both appear as `tool_call` events with `observed_by=proxy` and the TAS tenant.
+  - Disallow a tool, and confirm a Claude Code session no longer sees it.
+  - Rotate the connection. The next call uses the new secret within 60 s.
+- **Size:** about 19 days: C.1 3, C.2 1, C.3 3, C.4 4, C.5 4, C.6 4. C.1 to C.4 land in Wave 3, C.5 with P5-Tools, and C.6 last.
+
 ## 9. Wave 4: show (aiqg-ui)
 
 ### P5: widget Home and Settings
@@ -389,10 +422,10 @@ Sizes are rough engineer-days for one person working with Claude, and include re
 | 0 | W0.1-W0.5 | 8 | Wave 1 |
 | 1 | P1 | 5 | Wave 0 |
 | 2 | P2-Aether, P2 | 16 | P2a tail |
-| 3 | P3, P4, P4-Tools | 23 | each other, after P2 |
-| 4 | P5, P5-Tools | 17 | P4-Tools tail |
+| 3 | P3, P4, P4-Tools, P4-Config (C.1-C.4) | 34 | each other, after P2 |
+| 4 | P5, P5-Tools, C.5, C.6 | 25 | P4-Tools tail |
 | 5 | P2b, P6, P7 | 19 | each other |
-| **Total** | | **≈ 88** | about 10 to 12 calendar weeks with the parallelism above |
+| **Total** | | **≈ 107** | about 12 to 14 calendar weeks with the parallelism above |
 
 **Suggested first two weeks:** W0.1 (day 1), W0.2, W0.5 and WP1.1 to 1.3, then W0.3, W0.4 and WP1.4 to 1.6. Start A.1 (stop deleting teams) in week 2. It is small and protects everything after it.
 
@@ -409,6 +442,10 @@ Sizes are rough engineer-days for one person working with Claude, and include re
 | Widening the netpol opens more than intended | W0.1 | Egress by namespace selector only to `tas-mcp-servers` and Redis; no `0.0.0.0/0` |
 | Single-node capacity during rollouts | all | BestEffort QoS per the cluster policy; roll one deployment at a time |
 | The aether-be CI MinIO pull breaks red builds | P2-Aether | Check the job logs. A red `Start MinIO` proves nothing about the code; fix CI first if it recurs |
+| One tenant's connection is used on another tenant's call | C.1, C.4 | The tenant comes from the resolved token, never from the request body; connections are keyed by `(tenant_id, server_id)` only; the two-tenant tests in P4-Config |
+| A connection secret leaks through a log, event or response | C.4 | A write-only API; the BYOK envelope; the proxy redacts injected values from its own logs and findings; a test that greps every output |
+| The operator and the UI overwrite each other | C.2 | `managed_by` on every row; each side touches only its own |
+| A tenant server outside the cluster needs egress | C.1 | Q13. Until it is decided, MCP-14's NetworkPolicy allows only `tas-mcp-servers` and Redis |
 
 ## 13. Decisions needed, and when
 
@@ -419,6 +456,8 @@ Sizes are rough engineer-days for one person working with Claude, and include re
 | Q4 | Does `tags` carry the data type? | P4.3 | Measured in 4.0 |
 | Q11 | Gateway scans `role: tool`? | P4-Tools | Answered by W0.5 |
 | Q12 | Refuse untokened proxy calls? | T.1 | No; observe by default, refusal per tenant later |
+| Q13 | May a tenant add an MCP server hosted outside our cluster? | C.1 | Yes, HTTPS only, through a per-tenant egress allowlist on the proxy |
+| Q14 | Which connection kinds ship first? | C.4 | Database DSN (dbhub, as Aether has today) and OAuth client credentials (the EV pilot's CRM servers) |
 | Q9 | Do team viewers see person rows? | P5.2 | No, totals only, matching D11 |
 | Q6 | Weekly digest? | P6 | Yes; one template on the Home endpoint |
 | — | Turn on `MULTI_ORG_VIEWER` publicly | P2b rollout | After the route-walk review |
