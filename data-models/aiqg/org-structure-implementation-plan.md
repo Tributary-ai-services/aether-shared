@@ -215,6 +215,8 @@ flowchart LR
 
 Read the router's message walk and send one test request carrying a fake card number in a `role: tool` message. The answer decides whether P4-Tools has to *re-credit* tool-result findings or *add* them. No PR; record the answer in the design doc §14.2.
 
+**Done 2026-11-20: yes.** Both `role: tool` and Anthropic `tool_result` are scanned (four-request live test, with `user` as the positive control and `assistant` as the negative). P4-Tools **re-credits**. Details in the design doc §14.2 Q11.
+
 ## 6. Wave 1: P1 Record who
 
 Merge in this order. Each PR is safe on its own.
@@ -454,7 +456,7 @@ Sizes are rough engineer-days for one person working with Claude, and include re
 | Q7 | Who may create orgs? | P2 (2.7) | Any signed-in person, as in Aether today |
 | Q3 | `user_id` fold threshold | P4.1 | Measured in 4.0 |
 | Q4 | Does `tags` carry the data type? | P4.3 | Measured in 4.0 |
-| Q11 | Gateway scans `role: tool`? | P4-Tools | Answered by W0.5 |
+| Q11 | Gateway scans `role: tool`? | P4-Tools | **Answered 2026-11-20: yes** (W0.5); P4-Tools re-credits |
 | Q12 | Refuse untokened proxy calls? | T.1 | No; observe by default, refusal per tenant later |
 | Q13 | May a tenant add an MCP server hosted outside our cluster? | C.1 | Yes, HTTPS only, through a per-tenant egress allowlist on the proxy |
 | Q14 | Which connection kinds ship first? | C.4 | Database DSN (dbhub, as Aether has today) and OAuth client credentials (the EV pilot's CRM servers) |

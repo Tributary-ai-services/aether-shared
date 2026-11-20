@@ -628,7 +628,7 @@ Design:
 
 Tracked as GK-5. Lands in P4-Tools (proxy writes, gateway reads), but the gateway half helps prompts on its own and can ship first.
 
-**What exists now.** The scan (G2), reduction and federation are built and enabled (`tas-mcp` PR #27; `SCANNING_ENABLED=true`, log-only). Findings are a zap log line with `server_id` and pattern counts (`internal/scanning/install.go:61-82`). There are no Prometheus metrics, no events, and no caller identity. The gateway records `tools_declared` as a boolean and links flows by `tool_call_id`, but records no tool names. Open: whether the gateway's prompt scan covers `role: tool` messages. If it does, findings in tool results are already caught but credited to the prompt rather than the tool. Check before P4-Tools.
+**What exists now.** The scan (G2), reduction and federation are built and enabled (`tas-mcp` PR #27; `SCANNING_ENABLED=true`, log-only). Findings are a zap log line with `server_id` and pattern counts (`internal/scanning/install.go:61-82`). There are no Prometheus metrics, no events, and no caller identity. The gateway records `tools_declared` as a boolean and links flows by `tool_call_id`, but records no tool names. The gateway's prompt scan **does** cover `role: tool` messages and Anthropic `tool_result` blocks (verified live 2026-11-20, §14.2 Q11), so findings in tool results are already caught but credited to the prompt rather than the tool.
 
 ### 9.6 Configuring MCP servers (D18)
 
@@ -905,7 +905,16 @@ Dynamic configuration (options such as window sizes, `max_tokens`, cache and red
 8. ~~Source of truth for org membership and teams.~~ Decided as D14: Aether owns orgs, teams and membership.
 9. Should `viewer` team members see person-level rows on the team's Home, or only totals?
 10. ~~Do agent-builder agents inherit their team from the creating user's default team?~~ Decided as D15: yes. An agent is scoped by tenant and owner; its team is the owner's default team unless placed. Sharing is visibility only (F3).
-11. Does the gateway's prompt scan cover `role: tool` messages? If so, tool-result findings already exist and only need crediting to the tool (§9.5).
+11. ~~Does the gateway's prompt scan cover `role: tool` messages?~~ **Answered 2026-11-20 (Plan #22 W0.5): yes, in both API shapes, so P4-Tools *re-credits* tool-result findings to the tool rather than adding them.** Code: `ScanMessages` (`tas-llm-router internal/gatekeeper/gatekeeper.go:316`) scans every role except `assistant` unless a message carries `trust: pre_scanned`. The live ConfigMap sets no `scan_policy`, so the defaults apply (always `user`, never `assistant`, everything else scanned). `/v1/messages` fans each Anthropic `tool_result` block out into a `role: tool` message (`internal/server/anthropic_messages.go:334`) *before* the shared scan at `server.go:1294`. Live test on `llm-router-aiqg` (5.118.0-rc.1, tenant a689c0b2), one Luhn-valid test card per request:
+
+    | message carrying the card                      | inbound findings          |
+    |------------------------------------------------|---------------------------|
+    | `role: tool` (OpenAI `/v1/chat/completions`)   | 1 × `pii_credit_card`     |
+    | `tool_result` block (Anthropic `/v1/messages`) | 1 × `pii_credit_card`     |
+    | `role: user` (positive control)                | 1 × `pii_credit_card`     |
+    | `role: assistant` (negative control)           | 0                         |
+
+    Two consequences. First, a tool-result finding is today credited to the prompt (`assurance_inbound_count`, `tag_pii_credit_card`) with nothing saying it came from a tool; P4-Tools adds the attribution, not the detection. Second, because the whole history is re-scanned on every turn, that one card is counted again on every later turn of the conversation. That is the double count GK-5a (W0.4) removes. With the MCP proxy's own scan (G2) the same content is also scanned a third time at the proxy, which is the case §9.5's shared attestation store covers.
 12. Should a call to the MCP proxy without a token be refused? Proposed: served and recorded as `(unattributed)` by default, refusal a per-tenant setting.
 13. May a tenant add an MCP server hosted outside our cluster (a vendor's remote endpoint, or one the customer runs)? Proposed: yes, HTTPS only, through a per-tenant egress allowlist on the proxy (§9.6).
 14. Which connection kinds ship first? Proposed: database DSN (as Aether has today, for `dbhub`) and OAuth client credentials (the CRM servers the EV pilot needs).
