@@ -9,9 +9,9 @@ service: aether-be
 model: Team
 database: Neo4j
 label: Team
-version: 2.0.0
+version: 2.1.0
 last_updated: 2026-11-21
-status: implemented (Plan #22 A.1–A.4: aether-be #66, #67, #68, #69)
+status: implemented (Plan #22 A.1–A.4: aether-be #66, #67, #68, #69); repos / source_apps: AE-36 (aether-be #74)
 go_struct: aether-be/internal/models/team.go
 ```
 
@@ -32,6 +32,8 @@ A team is a group of people inside one Aether organization. Teams nest (one pare
 | `visibility` | `private` \| `organization` \| `public` | Who sees it and how one joins (§4). |
 | `parent_team_id` | string or null | Mirrors the `CHILD_OF` edge; written with it, nothing else writes it. |
 | `settings` | string (JSON) | Stored as JSON text: Neo4j properties cannot be maps. (Before A.2 it was stored as a map, which made every create fail.) |
+| `repos` | list of string, or absent | GitHub repos the team owns, `owner/name`, stored **lowercase**, sorted, unique. At most 200. Absent = none (an empty list is stored as no property). AE-36. |
+| `source_apps` | list of string, or absent | AIQG `source_app` values the team owns, sorted, unique, **case preserved** (AIQG matches `source_app` exactly). 1–100 characters of letters, digits and `. _ - : @ +`, starting with a letter or digit; no spaces or `/`. At most 100. AE-36. |
 | `archived_at`, `archived_reason` | datetime, string | Set instead of deleting. `archived_reason` = `archived` or `organization_deleted`. |
 | `created_by`, `created_at`, `updated_at` | | |
 
@@ -68,6 +70,18 @@ Anyone else gets 404. Archived teams are listed to no one, stay readable by id, 
 | `GET` | `/api/v1/teams/:id/join-requests` | managers |
 | `POST` | `/api/v1/teams/:id/join-requests/:request_id` | `{approve, joined_at?}`; managers |
 | `PUT` | `/api/v1/teams/:id/members/:user_id/joined-at` | `{joined_at}`; managers |
+| `PUT` | `/api/v1/teams/:id/repos` | `{repos: ["owner/name", …]}` replaces the list (`[]` clears; the key is required); managers |
+| `POST` | `/api/v1/teams/:id/repos` | `{repo: "owner/name"}` adds one (already owned = no-op); managers |
+| `DELETE` | `/api/v1/teams/:id/repos/:owner/:name` | removes one; 404 `repo_not_owned` if the team does not own it; managers |
+| `PUT` | `/api/v1/teams/:id/source-apps` | `{source_apps: [...]}` replaces (`[]` clears; key required); managers |
+| `POST` | `/api/v1/teams/:id/source-apps` | `{source_app: "..."}` adds one; managers |
+| `DELETE` | `/api/v1/teams/:id/source-apps/:source_app` | removes one; 404 `source_app_not_owned`; managers |
+
+"Managers" = a team owner/admin or an org owner/admin. The repo and source-app writes return the team (`repos`, `sourceApps` in the response, always arrays); a malformed value is `400 invalid_repo` / `invalid_source_app`, too many is `400 too_many_repos` / `too_many_source_apps`, an archived team is `409 team_archived`. `PUT /teams/:id` does **not** take `repos` / `source_apps`.
+
+### 5.1 Repos and source apps
+
+They are the team's non-human members (design `aiqg/org-structure-and-attribution.md` §5.1): AIQG's proposer (§7, `repo_majority` / `repo_team`) attributes traffic to the team that owns its repo or source app. Nothing stops two teams in an org owning the same repo; the proposer has to treat that as ambiguous. They are also returned by the internal snapshot (`GET /internal/v1/orgs/:id/snapshot`, `teams[].repos` / `teams[].source_apps`, always arrays).
 
 ## 6. Events
 
