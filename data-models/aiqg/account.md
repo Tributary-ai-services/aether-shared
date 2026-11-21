@@ -7,14 +7,39 @@
 ```yaml
 service: aiqg-dashboard-be
 model: AIQGAccount
-database: Neo4j
-node_label: AIQGAccount
-version: 1.0.0
-last_updated: 2026-05-31
-status: planned (new node label; non-breaking addition)
+database: PostgreSQL (shared instance, schema `aiqg`) — as built; this doc first specified a Neo4j node
+table: aiqg.account
+version: 2.0.0
+last_updated: 2026-11-21
+status: implemented as a Postgres row; the Space binding below was never built and is replaced by the org link (§0, Plan #22 2.1)
+go_struct: aiqg-dashboard-be/internal/models/account.go
 spec_refs: source-spec-v0.2.md §3.1, §3.2, §3.11, §4.1, §4.2, §5
 plan_ref: build-vs-reuse.md §4.2, §7.5
 ```
+
+---
+
+## 0. Correction (2026-11-21, Plan #22 2.1)
+
+This document was written before the account was built and still describes the plan of the time. Two things in it are **not true** of the system:
+
+1. **Storage.** The account is a Postgres row, `aiqg.account` (`aiqg-dashboard-be` migration 001 onward), not a Neo4j `AIQGAccount` node. The property names below match the columns; the Neo4j labels, relationships and constraints in §2–§3 do not exist.
+2. **The binding to Aether.** The `(:Space)-[:HAS_AIQG_ACCOUNT]->(:AIQGAccount)` edge was **never built**, and it was the wrong anchor: one Aether organization owns several `Space` nodes with different ids. The binding that exists is the **org link** (design `org-structure-and-attribution.md` §5.0, D13; migration 054, aiqg-dashboard-be#265):
+
+| Column | Meaning |
+|---|---|
+| `kind` | `org` (bound to an Aether organization) or `personal` (bound to one Aether user); NULL = unlinked |
+| `aether_org_id` | Aether `Organization.id`, when `kind = org` |
+| `aether_user_id` | Aether `User.id`, when `kind = personal` |
+| `aether_tenant_id` | Aether's own tenant string for that scope, when known |
+
+- **One org, one AIQG tenant**, and vice versa: unique on `aether_org_id` and on `aether_user_id`; a CHECK ties `kind` to which id is set.
+- **The AIQG `tenant_id` is not rekeyed.** It stays the key of every token, event and rollup; the link is a column.
+- **Set by platform operators only**, through `PUT /api/v1/admin/accounts/:tenant_id/aether-link`, with an `org.account.linked` audit row in the same transaction. A tenant admin cannot point a tenant at another org.
+- **Checked nightly**: `aiqg_org_link_drift{kind="unlinked_account"|"missing_org"|"unlinked_org"}`; drift is reported, never fixed silently.
+- **Live state (2026-11-21):** `65ea3247…` (our own traffic) is linked to the Aether org **TAS** (`4c4d7143…`); `a689c0b2…` (the demo tenant) is unlinked until its Aether org exists (Plan #22 2.7).
+
+Where §1–§4 below say "Space", read "the linked Aether organization".
 
 ---
 
@@ -31,7 +56,7 @@ The `AIQGAccount` node is the **AI Quality Gateway tenant root**. It owns gatewa
 Created at sign-up (spec §4.1), enters `provisioning` while Kafka topics / TimescaleDB partitions / quickstart token are wired up, transitions to `active` on first valid gateway request, may be `suspended` (quota or compliance event), and finally `archived` on customer offboarding. Soft-delete only — raw data retention obligations are honored from the `[[audit-log-entry]]` stream.
 
 ### Key Characteristics
-- **1:1 with `Space`** via shared `tenant_id` (no new properties on `Space`)
+- **1:1 with an Aether organization (or person)** via the org link (§0); the Space binding originally specified here was never built
 - **Path-A friendly** — no vendor API keys stored on the account; auth tokens live in `[[token]]` nodes (referenced, not embedded)
 - **Region-pinned** at sign-up (spec §3.11); regional residency is enforced at the data plane
 - **PII tokenization on by default** via Databunker (spec §3.11)
@@ -120,8 +145,8 @@ CREATE INDEX aiqg_account_region IF NOT EXISTS
 
 ### Outgoing
 
-#### `(:Space)-[:HAS_AIQG_ACCOUNT]->(:AIQGAccount)`
-**Purpose**: 1:1 binding of an existing TAS Space to its AIQG configuration.
+#### `(:Space)-[:HAS_AIQG_ACCOUNT]->(:AIQGAccount)` — never built (see §0)
+**Purpose (original plan)**: 1:1 binding of an existing TAS Space to its AIQG configuration. Superseded by the org link columns in §0.
 
 **Properties**: none.
 
