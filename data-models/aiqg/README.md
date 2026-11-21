@@ -19,6 +19,7 @@ This directory contains the 16 data-model docs and the master plan for the AIQG 
 | [token.md](./token.md) | Customer bearer tokens (`tas_qg_live_*`, PostgreSQL `aiqg.token`) — hashing, lifecycle, and the data-access scopes the customer data MCP server requires |
 | [request-event.md](./request-event.md) | Per-request capture envelope (TimescaleDB hypertable + CloudEvent) |
 | [response-event.md](./response-event.md) | Per-response capture envelope paired with request-event |
+| [tool-call-event.md](./tool-call-event.md) | One tool call, seen by the MCP proxy and/or the LLM gateway (`com.tas.aiqg.tool_call.v1`), merged into one row; `tool_call_events` / `tool_call_1h` / `tool_catalogue` (Plan #22 §9.5) |
 | [token-accounting.md](./token-accounting.md) | Input/output/cached/tool tokens, vendor pricing, estimated vs. actual cost, three-category waste decomposition |
 | [event-timestamps.md](./event-timestamps.md) | DNS/TLS/TTFB/TTFT/inter-token/last-chunk latency capture |
 | [request-structure.md](./request-structure.md) | system/user/history/tools/context observational snapshot |
