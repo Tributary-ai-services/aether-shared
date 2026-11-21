@@ -28,7 +28,26 @@
 -- by retention would recompute it from nothing.
 --   CALL refresh_continuous_aggregate('aiqg.event_metrics_actor_1h', <from>, <from> + 7 days);
 --
+-- COST BASIS (AIQG-47). effective_cost_usd is sum(COALESCE(cache-aware,
+-- cache-blind)) per row, which is what every AIQG cost figure means. It cannot
+-- be rebuilt from the two separate sums, because about 97% of events (all
+-- before cache-aware pricing existed) have no cache-aware cost. The first
+-- version of this file lacked it; the DO block below drops a view of that old
+-- shape so the CREATE recreates it (re-run the backfill after: it is cheap,
+-- and raw still covered every materialized hour on 2026-11-21).
+--
 -- Idempotent: IF NOT EXISTS / if_not_exists / OR REPLACE throughout.
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM timescaledb_information.continuous_aggregates
+              WHERE view_schema = 'aiqg' AND view_name = 'event_metrics_actor_1h')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'aiqg' AND table_name = 'event_metrics_actor_1h' AND column_name = 'effective_cost_usd') THEN
+    DROP MATERIALIZED VIEW aiqg.event_metrics_actor_1h CASCADE;
+    RAISE NOTICE 'event_metrics_actor_1h: old shape dropped; re-run the backfill';
+  END IF;
+END $$;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS aiqg.event_metrics_actor_1h
 WITH (timescaledb.continuous) AS
@@ -48,6 +67,7 @@ SELECT
     count(*) FILTER (WHERE status IS DISTINCT FROM 'success')            AS error_count,
     sum(total_cost_usd)                                                  AS total_cost_usd,
     sum(cache_aware_total_cost_usd)                                      AS cache_aware_cost_usd,
+    sum(COALESCE(cache_aware_total_cost_usd, total_cost_usd))            AS effective_cost_usd,
     sum(prompt_tokens)                                                   AS prompt_tokens,
     sum(completion_tokens)                                               AS completion_tokens,
     sum(total_tokens)                                                    AS total_tokens,
