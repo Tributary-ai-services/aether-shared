@@ -80,7 +80,7 @@ This document specifies the request event only. The paired response event is doc
 | `source_app` | text | no | yes | yes | Derived from the TAS-Auth token's `source_app` claim **or** the customer-supplied `TAS-Source-App` header (header wins if both present). Free-form, max 128 chars. |
 | `source_ip` | inet | yes | no | no | Client IP after trusted-proxy header normalization. May be IPv4 or IPv6. |
 | `region` | text | yes | no | yes | Region where this request was processed. One of `us-east`, `us-west`, `eu`. Set by deployment, not request. |
-| `tas_auth_token_id` | UUID | yes | no | yes | The customer-issued `tas_qg_live_*` token used. FK → AIQG token table (managed by `aiqg-dashboard-be`). |
+| `tas_auth_token_id` | UUID | yes | no | yes | The customer-issued `tas_qg_live_*` token used. FK → AIQG token table (managed by `aiqg-dashboard-be`). Since Plan #22 P1 it is also stamped on the [[response-event]], with the token owner's `sub` as `token_owner_sub`, because the aggregator reads response events only. |
 | `request_id` | text | no | yes | yes | Idempotency / correlation key. Set to vendor request id (e.g. OpenAI's `x-request-id` response header) when known. Falls back to a gateway-generated nonce when the vendor does not return one. |
 | `client_request_id` | text | no | yes | yes | Customer-supplied `X-Request-ID` header value, captured verbatim. |
 | `correlated_response_event_id` | UUID | no | yes | yes | FK → [[response-event]]`.response_event_id`. NULL until the paired response event is observed. Populated either by the gateway at emission (if it emits both events atomically) or by Spark at join time. |

@@ -13,8 +13,8 @@ kafka_topic: tas.aiqg.response.v1
 storage: TimescaleDB hypertable aiqg.response_events
 partition_key: complete_at
 primary_key: (response_event_id, complete_at)
-version: 1.1.0
-last_updated: 2026-05-31
+version: 1.2.0
+last_updated: 2026-11-20
 status: spec draft
 ```
 
@@ -77,6 +77,10 @@ data: <ResponseEvent JSON, see §2.2>
 | `request_event_id` | UUID | Yes | from req | FK to [[request-event]]. Indexed. |
 | `tenant_id` | UUID | Yes | from req | Denormalized from [[request-event]] for fast tenant-scoped queries. Matches `space.tenant_id`. |
 | `aiqg_account_id` | UUID | Yes | from req | Denormalized from [[request-event]] / [[account]] for fast account-scoped queries. |
+| `tas_auth_token_id` | UUID | No | from req | The `tas_qg_live_*` token that authenticated the request (Plan #22 P1). Before P1 it was on [[request-event]] only, which the aggregator does not read. Copied to `aiqg.event_metrics.token_id`. |
+| `token_owner_sub` | text | No | absent | Keycloak `sub` of the person who issued that token ([[token]] `owner_sub`, returned by `/internal/auth/validate`). The authenticated "who" behind the request. Absent for an unowned token. Copied to `aiqg.event_metrics.owner_sub`. Never the owner's email. |
+
+> **Two "who" fields, kept apart (Plan #22 §4).** `token_owner_sub` is authenticated: the bearer proves the token and issuance proves the owner. `agent_context.user_id` is asserted by the caller through baggage `user.id`, and is how an app that shares one token across people says who each request is for. Both are stored; the person is resolved at read time. Both fields are promoted to the Loki line when present.
 
 > **Denormalization rationale.** `tenant_id`, `aiqg_account_id`, `vendor`, and `model` live on [[request-event]] too. Duplicating them here avoids a join on every dashboard query and lets TimescaleDB use the composite index (`tenant_id`, `complete_at`) directly. The trade-off (write-amplification + drift risk) is acceptable because all four are immutable for the life of a request and they live in the same emit-time path.
 
