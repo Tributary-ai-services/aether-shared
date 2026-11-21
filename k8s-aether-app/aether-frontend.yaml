@@ -70,7 +70,7 @@ spec:
         # VITE_KEYCLOAK_URL=https://keycloak.tas.scharber.com,
         # VITE_KEYCLOAK_REALM=aether, VITE_KEYCLOAK_CLIENT_ID=aether-frontend,
         # VITE_DEV_MODE=false (tas.config.sha256 6ab11b64...).
-        image: registry-api.tas.scharber.com/aether-frontend:1.1.0@sha256:44747dcb02a944b8700fc256e439ed15bab016f755b2d6373541ab5fc9a37ba0
+        image: registry-api.tas.scharber.com/aether-frontend:1.2.0@sha256:78df978f943c56afc8292d78228e20b44600ac4f462ac6a7713e2569acfcdbe2
         imagePullPolicy: Always  # Pull from registry
         ports:
         - containerPort: 80
