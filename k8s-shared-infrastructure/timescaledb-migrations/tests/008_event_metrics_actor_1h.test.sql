@@ -12,6 +12,8 @@ VALUES
  ('2026-11-01 10:40+00', 't1', '00000000-0000-0000-0000-000000000002', 'kc-b', 'u2', 'claude-code', 'qa', 'anthropic', 'm', 'success', 0.30, 300, 3000, 60, 2, 'r3'),
  ('2026-11-01 11:10+00', 't1', '00000000-0000-0000-0000-000000000001', 'kc-a', 'u1', 'claude-code', 'qa', 'anthropic', 'm', 'success', 0.40, 400, 2000, 100, 0, 'r4'),
  ('2026-11-01 10:15+00', 't2', NULL, NULL, NULL, NULL, 'qa', 'openai', 'm', 'success', 1.00, 1000, 500, 50, 0, 'r5');
+-- One cache-aware row, so effective differs from the cache-blind sum.
+UPDATE aiqg.event_metrics SET cache_aware_total_cost_usd = 0.25 WHERE response_event_id = 'r3';
 CALL refresh_continuous_aggregate('aiqg.event_metrics_actor_1h', '2026-11-01', '2026-11-02');
 DO $$
 DECLARE r record; n int;
@@ -26,6 +28,10 @@ BEGIN
   IF abs((SELECT sum(total_cost_usd) FROM aiqg.event_metrics_actor_1h WHERE tenant_id='t1' AND bucket >= '2026-11-01' AND bucket < '2026-11-02')
      - (SELECT sum(total_cost_usd) FROM aiqg.event_metrics WHERE tenant_id='t1' AND time >= '2026-11-01' AND time < '2026-11-02')) > 1e-9 THEN
     RAISE EXCEPTION 'tenant total mismatch'; END IF;
+  -- effective = per-row COALESCE(cache-aware, cache-blind), not either sum.
+  IF abs((SELECT sum(effective_cost_usd) FROM aiqg.event_metrics_actor_1h WHERE tenant_id='t1' AND bucket >= '2026-11-01' AND bucket < '2026-11-02')
+     - (SELECT sum(COALESCE(cache_aware_total_cost_usd, total_cost_usd)) FROM aiqg.event_metrics WHERE tenant_id='t1' AND time >= '2026-11-01' AND time < '2026-11-02')) > 1e-9 THEN
+    RAISE EXCEPTION 'effective cost mismatch'; END IF;
   -- NULL actors keep their own row rather than vanishing.
   IF NOT EXISTS (SELECT 1 FROM aiqg.event_metrics_actor_1h WHERE tenant_id='t2' AND token_id IS NULL AND abs(total_cost_usd - 1.00) < 1e-9) THEN
     RAISE EXCEPTION 'NULL-actor row missing'; END IF;
