@@ -9,9 +9,9 @@ service: aiqg-dashboard-be
 model: Token
 database: PostgreSQL (shared instance, schema `aiqg`)
 table: aiqg.token
-version: 1.1.0
-last_updated: 2026-10-13
-status: implemented (migration 001; scopes + expires_at added in 036, aiqg-dashboard-be#177)
+version: 1.2.0
+last_updated: 2026-11-20
+status: implemented (migration 001; scopes + expires_at added in 036, aiqg-dashboard-be#177; owner_sub + owner_email added in 052, aiqg-dashboard-be#255)
 go_struct: aiqg-dashboard-be/internal/models/token.go
 ```
 
@@ -55,7 +55,9 @@ CREATE TABLE aiqg.token (
     revoked_at      TIMESTAMPTZ,
     last_used_at    TIMESTAMPTZ,
     scopes          TEXT[] NOT NULL DEFAULT '{}',   -- 036
-    expires_at      TIMESTAMPTZ                     -- 036; NULL = never
+    expires_at      TIMESTAMPTZ,                    -- 036; NULL = never
+    owner_sub       TEXT,                           -- 052; NULL = unowned
+    owner_email     TEXT                            -- 052; display only
 );
 -- Partial indexes on (tenant_id) and (token_hash), both WHERE revoked_at IS NULL.
 ```
@@ -78,6 +80,12 @@ CREATE TABLE aiqg.token (
 | `last_used_at` | TIMESTAMPTZ | Best-effort update on every resolve. |
 | `scopes` | TEXT[] | Data-access scopes. **Empty means a gateway and feedback token that cannot read data.** Every token minted before 036 has `{}`. |
 | `expires_at` | TIMESTAMPTZ | NULL means no expiry. A token past this instant resolves as not found, exactly like a revoked one. |
+| `owner_sub` | TEXT | Keycloak `sub` of the person who issued the token, from their JWT. The authenticated "who" behind every request made with it (Plan #22 P1). NULL means **unowned**: minted before the audit log, by SQL, or by a system job (the SDLC labeling worker). The demo-flow and audit-ask ephemeral tokens are owned by the person who ran them. |
+| `owner_email` | TEXT | The issuer's email, for display on the token list only. **Never** returned by `/internal/auth/validate` and never put on an event (design §12). |
+
+### Owner backfill (migration 052)
+
+052 set `owner_sub` and `owner_email` from the `token.issued` row in `aiqg.audit_log`, matching `resource_id = token_id` **and** the tenant, never overwriting an existing owner. On 2026-11-20 that was 3 of 644 tokens, the only ones issued through the API since auditing began. The rest stay unowned.
 
 ### Scopes
 
@@ -121,13 +129,13 @@ issued ──(DELETE)──> revoked          never resolves again
 | `GET` | `/api/v1/account/tokens` | JWT | Active tokens for the tenant, newest first. `scopes` is always an array, never null. |
 | `POST` | `/api/v1/account/tokens` | JWT | Body `{label, source_app, scopes?, expires_in_days?}`. 201 with `plaintext_bearer`, shown once. |
 | `DELETE` | `/api/v1/account/tokens/:id` | JWT | Tenant-scoped: 404 for another tenant's token. |
-| `POST` | `/internal/auth/validate` | Internal-Auth | Body `{bearer}`. 200, 401 unknown, 403 suspended, 500 resolver down. |
+| `POST` | `/internal/auth/validate` | Internal-Auth | Body `{bearer}`. 200 `{token_id, tenant_id, aiqg_account_id, source_app, suspended, label?, owner_sub?}`, 401 unknown, 403 suspended, 500 resolver down. `label` and `owner_sub` (052) are omitted when empty. |
 
 ---
 
 ## 7. Cross-Service Integration
 
-- **Gateway (`tas-llm-router`)** resolves tokens through `/internal/auth/validate` and does not read `scopes`. A data scope never changes what a token can do on the gateway.
+- **Gateway (`tas-llm-router`)** resolves tokens through `/internal/auth/validate` and does not read `scopes`. A data scope never changes what a token can do on the gateway. It stamps `tas_auth_token_id` and `token_owner_sub` on the response event, and the aggregator copies them to `aiqg.event_metrics.token_id` / `owner_sub` (TimescaleDB migration 007).
 - **Customer data MCP server (`aiqg-data-mcp`)** resolves the token directly, then:
   - 401 when it is unknown, revoked or expired;
   - 403 when it is suspended or carries no `data:*` scope;
