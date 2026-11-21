@@ -56,6 +56,23 @@ spec:
               --config retention.ms=604800000
           done
 
+          # Org and team changes from aether-be (Plan #22 A.4,
+          # data-models/aether-be/events/org-changes.md). Keyed by org id, so
+          # an org's events stay ordered within one partition. Kept 30 days,
+          # not 7: AIQG's team-history consumer must be able to catch up after
+          # an outage, and replaying is how it recovers.
+          for TOPIC in aether.org.changes.v1; do
+            echo "Creating topic: $TOPIC"
+            kafka-topics --bootstrap-server "$KAFKA" \
+              --create \
+              --if-not-exists \
+              --topic "$TOPIC" \
+              --partitions 6 \
+              --replication-factor 1 \
+              --config cleanup.policy=delete \
+              --config retention.ms=2592000000
+          done
+
           echo "Listing all topics:"
           kafka-topics --bootstrap-server "$KAFKA" --list
           echo "Topic creation complete."
