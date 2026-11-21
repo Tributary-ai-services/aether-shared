@@ -21,6 +21,10 @@
 # 0.2.0 (AIQG-47): writes the cache-aware cost columns (migration 003) and
 # ships AIQG-3's decomposition writer, which the previous ffa6290 image
 # predates -- those 8 columns existed but were never populated.
+#
+# 0.3.0 (Plan #22 WP1.4, tas-spark-jobs#11): writes event_metrics.token_id and
+# owner_sub (TimescaleDB migration 007) from the response event's
+# tas_auth_token_id / token_owner_sub. 007 must be applied first.
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -69,7 +73,7 @@ spec:
   mode: cluster
   pythonVersion: "3"
   sparkVersion: 3.5.0
-  image: registry-api.tas.scharber.com/tas-spark-jobs:0.2.0@sha256:8da90ffe1f949fdf229765528aa913b437cdaf12d8881e9e8fa6e606fafe3433
+  image: registry-api.tas.scharber.com/tas-spark-jobs:0.3.0@sha256:8e0a4a3f7c741471d175cb6f96ab9caae781760db6ec0be78579b390f09638eb
   imagePullPolicy: Always
   mainApplicationFile: local:///opt/spark/jobs/aiqg_aggregator/main.py
   deps:
