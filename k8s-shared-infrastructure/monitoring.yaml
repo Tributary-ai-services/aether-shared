@@ -539,6 +539,26 @@ data:
                 credential is wrong or missing; the send is retried every 15
                 minutes, and the claim is released each time.
 
+      # Plan #22 4.1 cardinality guard (design §14.2 Q3). The actor rollup keeps
+      # raw user_id; 5,000 rows in one hour is about 700x the 2026-11-21 peak
+      # (7). When this fires, design the user_id fold against the traffic that
+      # caused it rather than raising the threshold.
+      - name: aiqg_actor_rollup
+        rules:
+          - alert: AIQGActorRollupCardinalityHigh
+            expr: max by (tenant_id) (aiqg_actor_1h_rows_per_hour_max) > 5000
+            for: 15m
+            labels:
+              severity: warning
+              service: aiqg-dashboard-be
+              component: actor-rollup
+            annotations:
+              summary: "event_metrics_actor_1h is growing past its row budget"
+              description: >
+                Tenant {{ $labels.tenant_id }} produced {{ $value | printf "%.0f" }}
+                rollup rows in one hour (budget 5,000). user_id is caller-set and
+                unbounded; fold rare user_id values into '(other)' (design §9.1).
+
   # OPS-21. The nightly tas-backup CronJob is the only thing standing between
   # this cluster and permanent data loss, and it cannot be scraped: the pod
   # exits long before Prometheus would come looking. So it pushes its own
