@@ -34,6 +34,11 @@
 #
 # 0.4.1 (tas-spark-jobs#13): a proxy call without a valid token is kept as
 # tenant '(unattributed)' instead of dropped (design §9.5 observe mode).
+#
+# 0.5.0 (tas-spark-jobs#14): a third query fills aiqg.tool_catalogue from
+# com.tas.aiqg.tool_catalogue.v1 (proxy) and response events' tools_offered
+# (gateway); and a proxy outcome now always wins a merge (a gateway no_result
+# can come from the gateway losing its own echo work).
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -82,7 +87,7 @@ spec:
   mode: cluster
   pythonVersion: "3"
   sparkVersion: 3.5.0
-  image: registry-api.tas.scharber.com/tas-spark-jobs:0.4.1@sha256:54322cb00d9309203036d4b93f5e01fc4482dce05c5d9055f45fdcd9276e56dd
+  image: registry-api.tas.scharber.com/tas-spark-jobs:0.5.0@sha256:84fb09341474da2073d60f908cf32f288e4a143e392def6cd39357927cfa4eb3
   imagePullPolicy: Always
   mainApplicationFile: local:///opt/spark/jobs/aiqg_aggregator/main.py
   deps:
