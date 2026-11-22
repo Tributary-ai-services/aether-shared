@@ -25,6 +25,12 @@
 # 0.3.0 (Plan #22 WP1.4, tas-spark-jobs#11): writes event_metrics.token_id and
 # owner_sub (TimescaleDB migration 007) from the response event's
 # tas_auth_token_id / token_owner_sub. 007 must be applied first.
+#
+# 0.4.0 (Plan #22 T.7, tas-spark-jobs#12): a second streaming query routes
+# com.tas.aiqg.tool_call.v1 to aiqg.tool_call_events and merges proxy and
+# gateway sightings of one call at write time. TimescaleDB 009 must be applied
+# first (it was, 2026-11-21). The job stops if either query fails, so a
+# tool-call failure restarts it loudly rather than dropping tool calls.
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -73,7 +79,7 @@ spec:
   mode: cluster
   pythonVersion: "3"
   sparkVersion: 3.5.0
-  image: registry-api.tas.scharber.com/tas-spark-jobs:0.3.0@sha256:8e0a4a3f7c741471d175cb6f96ab9caae781760db6ec0be78579b390f09638eb
+  image: registry-api.tas.scharber.com/tas-spark-jobs:0.4.0@sha256:e363382155395b21d660e28e4daeae7d67a7c06ac613385db289a4834cb6600c
   imagePullPolicy: Always
   mainApplicationFile: local:///opt/spark/jobs/aiqg_aggregator/main.py
   deps:
