@@ -8,16 +8,16 @@
 service: tas-mcp (MCP proxy) + tas-llm-router (LLM gateway)
 model: ToolCallEvent
 wire_form: CloudEvent
-cloudevent_type: com.tas.aiqg.tool_call.v1
+cloudevent_type: com.tas.aiqg.tool_call.v1 (+ com.tas.aiqg.tool_catalogue.v1, §2.4)
 kafka_topic: tas.aiqg.events.v1
 storage: TimescaleDB hypertable aiqg.tool_call_events (+ aiqg.tool_call_1h, aiqg.tool_catalogue)
 partition_key: occurred_at
 primary_key: (occurred_at, tenant_id, event_id)
 migration: k8s-shared-infrastructure/timescaledb-migrations/009_tool_call.sql
-writer: tas-spark-jobs jobs/aiqg_aggregator/tool_calls.py
-version: 1.0.0
+writer: tas-spark-jobs jobs/aiqg_aggregator/tool_calls.py (+ tool_catalogue.py)
+version: 1.1.0
 last_updated: 2026-11-21
-status: schema + writer built (Plan #22 T.6/T.7); emitters in progress (T.2 proxy, T.5 gateway)
+status: schema + writers built (Plan #22 T.6/T.7; tool_catalogue writer since tas-spark-jobs 0.5.0); emitters in progress (T.2 proxy, T.5 gateway)
 ```
 
 ---
@@ -39,7 +39,7 @@ A call both sources saw is stored as **one row** with `observed_by = 'both'`. Se
 
 ### Key Characteristics
 
-- Same topic as the response event (`tas.aiqg.events.v1`); the Spark aiqg-aggregator routes by CloudEvent `type`, in its own streaming query (consumer group `spark-aiqg-aggregator-tool-calls`, checkpoint `/tool_calls/`). The job stops when either query fails, so a tool-call failure restarts the job loudly instead of dropping tool calls without notice.
+- Same topic as the response event (`tas.aiqg.events.v1`); the Spark aiqg-aggregator routes by CloudEvent `type`, in its own streaming query (consumer group `spark-aiqg-aggregator-tool-calls`, checkpoint `/tool_calls/`). `aiqg.tool_catalogue` has a third query (consumer group `spark-aiqg-aggregator-tool-catalogue`, checkpoint `/tool_catalogue/`, §2.4). The job stops when any query fails, so a tool-call or catalogue failure restarts the job loudly instead of dropping rows without notice.
 - Same identity fields as LLM events (design §4): the authenticated `token_id` + `owner_sub`, and the caller-asserted `user_id`, `agent_id`, `source_app`, `flow_id`, `step_id`.
 - `findings` carries **counts only**, never the matched value.
 - A tool call has no vendor cost of its own. Its cost is `result_tokens_est`, the tokens its result adds to the next prompt, priced at that request's model rate.
@@ -110,7 +110,40 @@ CHECK constraints enforce the `observed_by` and `outcome` sets and that `finding
 
 **Why a histogram and not `percentile_agg`.** The design asks for a p95 sketch via timescaledb_toolkit. The live database runs `timescale/timescaledb:2.13.0-pg15`, which does not ship the toolkit (checked 2026-11-21). The histogram re-groups by plain sum. p95 is the smallest bound whose cumulative count reaches `0.95 × latency_n`. A call over 30 s counts in `latency_n` but in no bucket. The 5 s bound is the default Speed target, so "share of calls under target" is `latency_le_5s / latency_n`, exact.
 
-`aiqg.tool_catalogue` stores snapshot rows `(snapshot_at, server_id, tool_name, schema_bytes, observed_by, tenant_id)`. The proxy writes its `tools/list` per server (`tenant_id` NULL). The gateway writes the tools a request offered (`server_id` NULL). The snapshot key is unique with `NULLS NOT DISTINCT`, so a re-delivered snapshot is a no-op.
+`aiqg.tool_catalogue` stores snapshot rows `(snapshot_at, server_id, tool_name, schema_bytes, observed_by, tenant_id)`. The proxy writes its `tools/list` per server (`tenant_id` NULL). The gateway writes the tools a request offered (`server_id` NULL). The snapshot key is unique with `NULLS NOT DISTINCT`, so a re-delivered snapshot is a no-op. How the rows are produced is in §2.4.
+
+### 2.4 Tool catalogue sources
+
+Two sources on `tas.aiqg.events.v1` feed `aiqg.tool_catalogue`. The writer is `tas-spark-jobs jobs/aiqg_aggregator/tool_catalogue.py` (since 0.5.0), in its own streaming query.
+
+**MCP proxy: CloudEvent `com.tas.aiqg.tool_catalogue.v1`**, one event per server per hour:
+
+```json
+{
+  "specversion": "1.0",
+  "type": "com.tas.aiqg.tool_catalogue.v1",
+  "source": "urn:tas:service:tas-mcp",
+  "id": "<unique>",
+  "time": "2026-11-21T10:00:03Z",
+  "data": {
+    "snapshot_at": "2026-11-21T10:00:00Z",
+    "server_id": "napkin-mcp",
+    "observed_by": "proxy",
+    "tenant_id": null,
+    "tools": [{"name": "draw", "schema_bytes": 310}, {"name": "erase", "schema_bytes": 120}]
+  }
+}
+```
+
+One row per element of `tools`. `server_id` from the event, `tenant_id` NULL (the federation is shared).
+
+**LLM gateway: `tools_offered` on `com.tas.aiqg.response.v1`** (see [[response-event]] §2 Offered Toolset). One row per element, `snapshot_at` = the response's CloudEvent `time`, `server_id` NULL, `observed_by = 'gateway'`, `tenant_id` from the event. The gateway sends `tools_offered` once per toolset per tenant per hour per replica; the per-replica repeats collapse on the key. The response event's projection to `aiqg.event_metrics` is unaffected.
+
+**Shared rules.**
+
+- `snapshot_at` is truncated to the **UTC hour** for both sources, in SQL with an explicit `'UTC'`, so the database session's time zone cannot move it. A conforming proxy `snapshot_at` is already an hour, so this is a no-op there.
+- `INSERT ... ON CONFLICT DO NOTHING` on the key `(snapshot_at, server_id, tool_name, observed_by, tenant_id)`. Re-delivery, retried micro-batches and several gateway replicas all collapse to one row. **The first write of a key wins**: a different `schema_bytes` for the same tool in the same hour is not recorded until the next hour's snapshot.
+- Why its own query and not part of the response query: the response query's projection and its transaction stay unchanged, and the proxy half is not a response event. The cost is one more Kafka consumer on the topic.
 
 ---
 
@@ -127,6 +160,13 @@ CHECK constraints enforce the `observed_by` and `outcome` sets and that `finding
 - Stored as tenant `(unattributed)`: a proxy event with no `tenant_id` (an untokened call, served in observe mode). Since tas-spark-jobs 0.4.1.
 - Dropped by the aggregator, never stored: a gateway event with no `tenant_id`, no `tool_name`, no CloudEvent `id`, `observed_by` other than `proxy`/`gateway`, `outcome` outside the six values.
 - Stored with a NULL: non-UUID `token_id`, non-object `findings`, empty strings in optional text fields.
+
+`aiqg.tool_catalogue` (§2.4):
+
+- Dropped: a tool with no name (or a blank one) or a NULL array element; `observed_by` other than `proxy`/`gateway`; a proxy event with no `server_id`; a gateway response with no `tenant_id`; `tools` / `tools_offered` that is not an array.
+- Stored with a NULL: `schema_bytes` that is negative, over the INTEGER range, or not a number.
+- A proxy `snapshot_at` that is missing or unparsable falls back to the CloudEvent `time`, then the Kafka timestamp, before truncation.
+- No malformed row fails a batch.
 
 ---
 
@@ -214,7 +254,7 @@ Every row carries `tenant_id`, and the merge never crosses tenants. `findings` h
 ## 8. Deployment Order
 
 1. Apply `009_tool_call.sql` (via `scripts/deploy-timescaledb.sh`).
-2. Deploy the tas-spark-jobs image that contains `tool_calls.py`. If the job deploys before the table exists, its tool-call query fails on its first batch, and because the job waits on either query, the whole job restarts.
+2. Deploy the tas-spark-jobs image that contains `tool_calls.py` (and, from 0.5.0, `tool_catalogue.py`). If the job deploys before the tables exist, its tool-call or catalogue query fails on its first batch, and because the job waits on any query, the whole job restarts.
 3. Enable the emitters (T.2, T.5).
 
 ---
@@ -224,3 +264,4 @@ Every row carries `tenant_id`, and the merge never crosses tenants. `findings` h
 | Version | Date | Change |
 |---|---|---|
 | 1.0.0 | 2026-11-21 | Initial: event contract, `tool_call_events` / `tool_call_1h` / `tool_catalogue` (migration 009), write-time proxy+gateway merge (Plan #22 T.6/T.7) |
+| 1.1.0 | 2026-11-21 | `tool_catalogue` writer (tas-spark-jobs 0.5.0): proxy `com.tas.aiqg.tool_catalogue.v1` and gateway `tools_offered`, UTC-hour snapshots, `ON CONFLICT DO NOTHING` (§2.4) |
