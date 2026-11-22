@@ -75,6 +75,7 @@ Field names are snake_case on the wire and in the table.
 | `server_id` | text | No | proxy | MCP server id. NULL means the call did not go through the proxy. |
 | `observed_by` | enum | Yes | — | `proxy` \| `gateway` on the wire. `both` is written only by the aggregator. |
 | `outcome` | enum | Yes | both | `ok` \| `tool_error` \| `timeout` \| `unreachable` \| `blocked` \| `no_result`. Anything else is dropped. `no_result` comes only from the gateway. |
+| `no_result_basis` | enum | No | gateway | On `no_result` only: `sibling` \| `timeout`, how the gateway concluded the result never came back. Accepted and **not stored** (no column). |
 | `duration_ms` | int | No | proxy | The tool's own time, measured at the proxy. |
 | `round_trip_ms` | int | No | gateway | From the response that made the call to the request that echoed its result; includes the client. |
 | `result_bytes` | bigint | No | proxy (gateway may estimate) | Size of the result. |
@@ -185,7 +186,7 @@ The aggregator merges at write time, in the same transaction as the insert:
 **Why not `ON CONFLICT`.** A unique index on a hypertable must include the partition column, and the two sources stamp different times.
 
 **Exceptions:**
-- **Outcome.** The proxy's outcome wins, except that a gateway `no_result` overrides a proxy `ok`. The proxy did deliver the result, but only the gateway can see that it never reached the model. A proxy failure (`tool_error`, `timeout`, …) is kept, since it explains the missing result.
+- **Outcome.** The proxy's outcome always wins, including over a gateway `no_result`: a proxy `ok` plus a gateway `no_result` is stored as `ok`, `observed_by = 'both'`. The gateway's timeout-based `no_result` is also produced when the gateway loses its own echo work (queue full, Redis error, rollout drain; tas-llm-router#284 review), so letting it override would overwrite a correct proxy outcome on every such loss. `no_result` is still stored for gateway-only rows. Since tas-spark-jobs 0.5.0; before that a gateway `no_result` overrode a proxy `ok`, and rows merged then keep it.
 - **Reused ids are not merged.** If one `(tenant_id, tool_call_id)` has more than one distinct proxy event or more than one distinct gateway event, nothing is merged and the rows are stored as they are. Some clients reuse ids (local models emit `call_0` every turn), and merging those would lose calls. **Emitters should send one event per call per source.**
 - **Late merges.** The refresh policy reaches back 4 hours. A merge that lands later than that is in raw, but `tool_call_1h` shows both rows until that window is refreshed by hand (explicit bounds, never NULL).
 
@@ -264,4 +265,4 @@ Every row carries `tenant_id`, and the merge never crosses tenants. `findings` h
 | Version | Date | Change |
 |---|---|---|
 | 1.0.0 | 2026-11-21 | Initial: event contract, `tool_call_events` / `tool_call_1h` / `tool_catalogue` (migration 009), write-time proxy+gateway merge (Plan #22 T.6/T.7) |
-| 1.1.0 | 2026-11-21 | `tool_catalogue` writer (tas-spark-jobs 0.5.0): proxy `com.tas.aiqg.tool_catalogue.v1` and gateway `tools_offered`, UTC-hour snapshots, `ON CONFLICT DO NOTHING` (§2.4) |
+| 1.1.0 | 2026-11-21 | `tool_catalogue` writer (tas-spark-jobs 0.5.0): proxy `com.tas.aiqg.tool_catalogue.v1` and gateway `tools_offered`, UTC-hour snapshots, `ON CONFLICT DO NOTHING` (§2.4). Merge outcome: the proxy's always wins; a gateway `no_result` no longer overrides a proxy `ok` (§5). `no_result_basis` documented, not stored |
