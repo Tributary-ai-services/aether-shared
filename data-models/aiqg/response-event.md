@@ -13,8 +13,8 @@ kafka_topic: tas.aiqg.response.v1
 storage: TimescaleDB hypertable aiqg.response_events
 partition_key: complete_at
 primary_key: (response_event_id, complete_at)
-version: 1.2.0
-last_updated: 2026-11-20
+version: 1.3.0
+last_updated: 2026-11-21
 status: spec draft
 ```
 
@@ -159,6 +159,17 @@ The gateway remembers, per tenant, what each inbound message's content produced 
 | `scan_ms` | float | No | absent | Wall time spent scanning, excluding the store lookup (20 ms budget). |
 
 On the Loki line, `scan_messages` and `scan_ms` are promoted whenever the inbound scan ran, and `scan_once`, `scan_skipped` and `attestation_hits` only when the store was used. The Kafka payload carries all five whenever non-zero.
+
+#### Offered Toolset (Plan #22 T.5, tas-llm-router#284)
+
+What the request offered the model, for the "never called" report (design `org-structure-and-attribution.md` §9.5). Emitted only when gateway tool-call events are on.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `tools_schema_bytes` | int | No | absent | Total size in bytes of the request's tool definitions (name, description, parameters): the input cost of offering them, on **every** request that offered tools. Not read by the aggregator today. |
+| `tools_offered` | array of `{"name": text, "schema_bytes": int}` | No | absent | One entry per offered tool. Sent **once per toolset per tenant per hour per gateway replica**, not on every request, so its absence does not mean the request offered no tools (`tools_schema_bytes` says that). |
+
+The aggregator explodes `tools_offered` into [[tool-call-event]] §2.3 `aiqg.tool_catalogue` rows: `snapshot_at` = the event time truncated to the UTC hour, `server_id` NULL (the model's tool list does not say which server serves a tool), `observed_by = 'gateway'`, `tenant_id` from this event. Since tas-spark-jobs 0.5.0. A response with no `tenant_id` contributes no catalogue rows. These fields do not reach `aiqg.event_metrics`; that projection is unchanged.
 
 #### Payload Retention
 
@@ -682,6 +693,8 @@ If `account.compliance_hold = true`, the retention policy on `aiqg.response_even
 |---|---|---|---|
 | 1.0.0 | 2026-05-31 | Initial spec draft. Hypertable `aiqg.response_events`, CloudEvent type `com.tas.aiqg.response.v1`, topic `tas.aiqg.response.v1`. CLEAR scores as `smallint`. | Day-1 AIQG MVP per [build-vs-reuse](./build-vs-reuse.md) §9 phasing. |
 | 1.1.0 | 2026-11-20 | Added `scan_once`, `scan_messages`, `scan_skipped`, `attestation_hits`, `scan_ms` (§2, Scan-Once). Inbound Assurance counts are once per conversation when `scan_once` is true. | Plan #22 GK-5a: re-scanning the resent history on every turn multiplied every finding by the conversation length (tas-llm-router#278, #280, #281). |
+| 1.2.0 | 2026-11-20 | Added `tas_auth_token_id`, `token_owner_sub` (§2, Identity & Linkage), copied to `event_metrics.token_id` / `owner_sub`. | Plan #22 WP1.3 (aether-shared#124). Row added 2026-11-21; #124 bumped the version without one. |
+| 1.3.0 | 2026-11-21 | Added `tools_schema_bytes`, `tools_offered` (§2, Offered Toolset). `tools_offered` feeds `aiqg.tool_catalogue` (tas-spark-jobs 0.5.0). | Plan #22 T.5/T.7: the never-called report needs what was offered, not only what was called (tas-llm-router#284). |
 
 ### Non-Breaking Change Posture
 
