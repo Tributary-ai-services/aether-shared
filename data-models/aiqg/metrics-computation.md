@@ -33,6 +33,14 @@ it rolls up into the dashboard reports.
         Reports (Health Report, CLEAR Scorecard, Cost, NIST, Reliability, …)
 ```
 
+**Event types on `tas.aiqg.events.v1`.** The aggregator routes by CloudEvent `type`:
+
+| `type` | Emitted by | Lands in |
+|---|---|---|
+| `com.tas.aiqg.request.v1` | tas-llm-router | not stored (the response event carries what is needed) |
+| `com.tas.aiqg.response.v1` | tas-llm-router | `aiqg.event_metrics` → `event_metrics_1m` / `_1h` / `_model_1h` / `_actor_1h` |
+| `com.tas.aiqg.tool_call.v1` | tas-mcp proxy, tas-llm-router | `aiqg.tool_call_events` → `tool_call_1h` ([`tool-call-event.md`](./tool-call-event.md)) |
+
 **Two rules that recur below:**
 - **`nil` ≠ 0.** Every CLEAR dimension is a nullable pointer. `nil` = "not scored / no signal" (excluded from averages and from the composite); `0` = "scored, and it's bad." Distinguish them everywhere.
 - **Scores are computed once, at the gateway.** Spark and the dashboard **aggregate** pre-computed scores; they never re-derive them. A formula change bumps `clear.Version` (`clear-v0.2-cost-decomp`) so a re-score job can find stale rows.
