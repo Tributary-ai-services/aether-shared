@@ -66,7 +66,7 @@ Field names are snake_case on the wire and in the table.
 
 | Field | Type | Required | Source | Description |
 |---|---|---|---|---|
-| `tenant_id` | text | Yes | both | Token tenant. Events without it are dropped. |
+| `tenant_id` | text | Yes (gateway) | both | Token tenant. A proxy call with no valid token has none and is stored as `(unattributed)` (operator-only view, design §9.5); a gateway event without it is dropped. |
 | `token_id` | UUID text | No | both | `aiqg.token` row that authenticated the caller. A value that is not a UUID is stored NULL rather than failing the batch (same rule as `event_metrics`, tas-spark-jobs#11). |
 | `owner_sub` | text | No | both | Keycloak `sub` of the token's issuer. |
 | `user_id`, `agent_id`, `source_app`, `flow_id`, `step_id` | text | No | both | Caller-asserted identity (W3C `baggage` / TAS headers). |
@@ -124,7 +124,8 @@ CHECK constraints enforce the `observed_by` and `outcome` sets and that `finding
 
 ## 4. Validation Rules
 
-- Dropped by the aggregator, never stored: no `tenant_id`, no `tool_name`, no CloudEvent `id`, `observed_by` other than `proxy`/`gateway`, `outcome` outside the six values.
+- Stored as tenant `(unattributed)`: a proxy event with no `tenant_id` (an untokened call, served in observe mode). Since tas-spark-jobs 0.4.1.
+- Dropped by the aggregator, never stored: a gateway event with no `tenant_id`, no `tool_name`, no CloudEvent `id`, `observed_by` other than `proxy`/`gateway`, `outcome` outside the six values.
 - Stored with a NULL: non-UUID `token_id`, non-object `findings`, empty strings in optional text fields.
 
 ---

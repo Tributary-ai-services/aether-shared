@@ -31,6 +31,9 @@
 # gateway sightings of one call at write time. TimescaleDB 009 must be applied
 # first (it was, 2026-11-21). The job stops if either query fails, so a
 # tool-call failure restarts it loudly rather than dropping tool calls.
+#
+# 0.4.1 (tas-spark-jobs#13): a proxy call without a valid token is kept as
+# tenant '(unattributed)' instead of dropped (design §9.5 observe mode).
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -79,7 +82,7 @@ spec:
   mode: cluster
   pythonVersion: "3"
   sparkVersion: 3.5.0
-  image: registry-api.tas.scharber.com/tas-spark-jobs:0.4.0@sha256:e363382155395b21d660e28e4daeae7d67a7c06ac613385db289a4834cb6600c
+  image: registry-api.tas.scharber.com/tas-spark-jobs:0.4.1@sha256:54322cb00d9309203036d4b93f5e01fc4482dce05c5d9055f45fdcd9276e56dd
   imagePullPolicy: Always
   mainApplicationFile: local:///opt/spark/jobs/aiqg_aggregator/main.py
   deps:
