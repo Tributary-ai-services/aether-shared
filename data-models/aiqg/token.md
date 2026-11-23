@@ -107,6 +107,12 @@ The valid set is enforced in Go (`models.ValidTokenScopes`), not in SQL, so addi
 - Scopes are de-duplicated and sorted before storage, so the stored value and the audit row are stable.
 - `expires_in_days` must be between 0 (never) and 365.
 - Omitting `scopes` and `expires_in_days` gives exactly the pre-036 token.
+- `team_id` (Plan #22 5.5) places the token in a team at issue, with the rule of `PUT /api/v1/tokens/:id/placement`:
+  - The caller must manage that team, or be an org owner or admin, or a platform operator. Otherwise `403 placement_forbidden`.
+  - The team must be an active team of the org. Otherwise `422 team_not_in_org`.
+  - The placement row starts at the token's `created_at`. It and its `org.token.placed` audit commit in the token's own transaction, so a failed placement leaves no token.
+  - With `ORG_STRUCTURE_ENABLED` off, a `team_id` is `400 org_structure_disabled`.
+  - Omitting it gives an unplaced token, as before.
 
 ---
 
@@ -127,7 +133,7 @@ issued ──(DELETE)──> revoked          never resolves again
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/api/v1/account/tokens` | JWT | Active tokens for the tenant, newest first. `scopes` is always an array, never null. |
-| `POST` | `/api/v1/account/tokens` | JWT | Body `{label, source_app, scopes?, expires_in_days?}`. 201 with `plaintext_bearer`, shown once. |
+| `POST` | `/api/v1/account/tokens` | JWT | Body `{label, source_app, scopes?, expires_in_days?, team_id?}`. 201 with `plaintext_bearer`, shown once, and `team_id` when placed (§4). |
 | `DELETE` | `/api/v1/account/tokens/:id` | JWT | Tenant-scoped: 404 for another tenant's token. |
 | `POST` | `/internal/auth/validate` | Internal-Auth | Body `{bearer}`. 200 `{token_id, tenant_id, aiqg_account_id, source_app, suspended, label?, owner_sub?}`, 401 unknown, 403 suspended, 500 resolver down. `label` and `owner_sub` (052) are omitted when empty. |
 
