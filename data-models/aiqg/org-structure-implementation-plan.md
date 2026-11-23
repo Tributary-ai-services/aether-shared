@@ -391,6 +391,11 @@ Today a server is added only by `kubectl apply` of a `FederatedMCPServer`. The f
 - **Gate:** a security test suite with two orgs and three users (member of A, owner of both, `aiqg-admin`). It walks **every** route in the router table, not a hand-picked list, and asserts that A's member gets nothing of B. It runs in CI.
 - **Rollout:** behind `MULTI_ORG_VIEWER`. Turn it on in the public deployment only after a review of the route-walk test output.
 - **Size:** M (5 days). Risk: **highest in the plan.**
+- **Built (backend), 2026-11-23**, not yet merged or deployed. The details are in the design doc §5.4 and §10.1.
+  - The gate is `cmd/server/tenancy_gate_test.go`. It walks the 243 routes of the router `main` builds, as five people: A's member, the owner of both, an `aiqg-admin` of A, B's plain member, and an `aiqg-admin` who is B's billing member.
+  - It checks that no outsider request changes B's rows, and that the flag-off router answers identically with and without the header.
+  - It runs in CI on a PostgreSQL service container and fails there rather than skip.
+  - Not built: `/home?scope=all` (`supports_all: false`) and personal scopes.
 
 ### P6: Forward and Follow-ups
 
