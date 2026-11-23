@@ -716,12 +716,12 @@ CREATE TABLE aiqg.mcp_connection (
 | PUT | `/api/v1/org/user-keys/:key` `{person_sub, valid_from}` | org owner/admin |
 | PUT | `/api/v1/tokens/:id/placement` `{team_id, valid_from}` | org owner/manager; team manager into their team |
 | PUT | `/api/v1/org/people/:sub/default-team` `{org_id, team_id}` | the person, or an org owner/manager |
+| GET | `/api/v1/org/people/:sub/default-team` | the person; a manager of that team or above; org owner/admin; `aiqg-admin` (D11) |
 | PUT | `/api/v1/sdlc/workflows/:id/owner` | `aiqg-admin`, or owner/manager of the target unit |
 | GET | `/api/v1/org/proposals?status=open` | owner/manager of the proposed unit; `aiqg-admin` |
 | POST | `/api/v1/org/proposals/:id/accept` \| `reject` | same |
 | GET | `/api/v1/org/actors/unassigned` | `aiqg-admin`, org owners — people, tokens, agents seen with no membership/placement |
 | GET | `/api/v1/me/scope` | signed-in user — the units the caller owns or manages (drives D7) |
-| GET | `/api/v1/org/people/:sub/default-team` | the person; a manager of that team or above; org owner/admin; `aiqg-admin` (D11) |
 | GET | `/api/v1/home?scope=&period=` | org member (D11 applied) |
 | GET | `/api/v1/metrics/units?view=billed\|reported\|involving\|served` | org member (D11 applied) |
 | GET / POST | `/api/v1/followups` | org member (lists those to, cc or by the caller; admins all) |
