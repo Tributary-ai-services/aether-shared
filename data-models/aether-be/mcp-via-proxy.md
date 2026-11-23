@@ -13,7 +13,7 @@ AIQG now holds per-tenant connections (C.4), and the tas-mcp proxy injects them 
 | Variable | Default | Meaning |
 |---|---|---|
 | `AETHER_MCP_VIA_PROXY` | `false` | Turns on the proxy path. Off means every direct path, including dbhub, works exactly as before. |
-| `AETHER_MCP_PROXY_URL` | `http://prod-tas-mcp-http.tas-mcp-prod.svc.cluster.local:8082` | The proxy's HTTP base URL. |
+| `AETHER_MCP_PROXY_URL` | `http://prod-tas-mcp-delegated.tas-mcp-prod.svc.cluster.local:8086` | The proxy's **delegated listener**. Its NetworkPolicy admits only `app=aether-backend` pods in `aether-be`, and the main port 8082 refuses the credential. |
 | `AETHER_MCP_PROXY_TIMEOUT_SECONDS` | `30` | The timeout for each proxy call. |
 | `AETHER_MCP_DELEGATE_TOKEN_FILE` | empty | The path of the delegate credential, a mounted Secret (see the next section). It is re-read when it changes. |
 | `AETHER_MCP_DELEGATE_TOKEN` | empty | The same credential from the environment, used only when no file is set. With the flag on and neither one set, every proxied call is refused with 503. |
@@ -31,17 +31,39 @@ POST {AETHER_MCP_PROXY_URL}/api/v1/federation/servers/{id}/invoke
 TAS-MCP-Delegate-Token:    <the delegate credential>
 TAS-MCP-On-Behalf-Of-Org:  <Aether organization id of the caller's space>
 TAS-MCP-On-Behalf-Of-User: <the caller's Keycloak sub>
+TAS-MCP-Expected-Connection-Id: <the connection the Database row is bound to>   (SQL console and mcp-postgres only)
 ```
 
 - **Who it acts for.** The org comes from the space context: `(o:Organization)-[:HAS_SPACE]->(space)`, or the org id itself in the legacy flow. The user is the JWT `sub`.
   - A personal space, an organization-type space with no owning Organization, or a request with no user is refused with **403** before any call.
   - aether-be never names a tenant and never sends `TAS-Auth`.
 - **What the proxy checks.** It calls aiqg-dashboard-be `POST /internal/mcp/delegation/verify` (see below). It refuses an unlinked org, a tenant that does not match the link, and a user who is not a member of the org. It fails closed with 503 when AIQG cannot answer. Only then is the call attributed to the tenant. The tool-call event records `delegated_by=aether-be` and `user_id=<sub>`.
-- **What the credential cannot do.** On any other route it gets 403, including registry writes, reads, broadcast and events. Only `tools/list` and `tools/call` run with it. The proxy refuses at startup a credential shaped like a gateway token, so it can never pass as `TAS-Auth` at the proxy or at the LLM gateway.
+- **What the credential cannot do.**
+  - It is served on **one listener only**: port 8086, Service `prod-tas-mcp-delegated`, reachable from aether-backend pods alone.
+  - On that listener it runs only `POST /servers/{id}/invoke` with `tools/list` or `tools/call`.
+  - The main port 8082 refuses any request that carries it, on every route, invoke included. So it can never register, update or delete a server, read the admin view, or broadcast.
+  - A repeated delegation header, or a `TAS-Auth` or admin header next to it (even empty), gets 400.
+  - The proxy refuses at startup a credential shaped like a gateway token, so it can never pass as `TAS-Auth` at the proxy or at the LLM gateway.
+- **The row's binding is checked.** The SQL console and `mcp-postgres` send the connection id their `Database` row is bound to. If the tenant's stored connection is now a different one (replaced in AIQG) or there is none, the proxy answers **409** and injects nothing, and aether-be returns 409 `connection_changed_in_aiqg`. Replacing a connection in AIQG can therefore never silently repoint an Aether row.
+- **Space permissions.**
+  - The SQL console, on the dbhub path and the proxy path alike, needs `read` in the space.
+  - A proxied tool call needs `write`.
+  - A direct call that names a saved connection needs `read` (test) or `write` (invoke). Without a space it is refused; it used to fall back to the `default` tenant.
+  - `mcp-postgres` through the proxy needs a `connection_id` bound to postgres-mcp. Without one, the call is refused before it reaches the proxy, so no SQL runs on the tenant's DSN without a `Database` row behind it.
 - **Where it lives.**
   - On aether-be: Secret `aether-mcp-delegate-token` (key `token`) in `aether-be`, mounted at `AETHER_MCP_DELEGATE_TOKEN_FILE`. The file is re-read when it changes, so rotation needs no restart. `AETHER_MCP_DELEGATE_TOKEN` is used only when no file is set. The value is never logged or formatted.
   - On the proxy: the same value as Secret `tas-mcp-delegate-token` (key `token`) in `tas-mcp-prod`.
-- **What a compromise of aether-be still allows.** It can call tools as any linked org, but only as a user who is a member of that org in AIQG's copy of Aether's membership. Every call is attributed to that user. It cannot register servers, read other tenants' configuration, or send LLM traffic.
+- **What a compromise still allows.**
+  - **An attacker with code execution in an aether-backend pod**, who has both the credential and a network path to 8086, can call `tools/list` and `tools/call` as any linked org. Each call must name a sub that AIQG's copy shows as a **current org-level member** of that org, and it is attributed to that sub. Valid (org, sub) pairs are not in the proxy's or AIQG's refusal logs (subs are hashed), but aether-be's own Neo4j has them. Within those calls, the attacker can use each org's stored connections on the servers that hold them.
+  - **They cannot:**
+    - register, update or delete servers;
+    - read the admin view or other tenants' server configuration;
+    - broadcast;
+    - send LLM traffic;
+    - use an org that is not linked, or a sub that is not an org member;
+    - choose a database: stored DSNs only, the caller's `_connection` is stripped, and egress is checked.
+  - **A copy of the credential alone**, used from any other pod in the cluster, is refused by the NetworkPolicy before it reaches the proxy. It is also refused on 8082 even if that network path were open.
+  - **Follow-up, not done:** binding the credential to aether-backend's ServiceAccount (a projected token checked with TokenReview), so that even an admitted pod has to present its own identity.
 
 ### Verify endpoint (aiqg-dashboard-be)
 
@@ -50,15 +72,29 @@ TAS-MCP-On-Behalf-Of-User: <the caller's Keycloak sub>
 | Request | `{"aether_org_id": "...", "tenant_id": "<uuid, optional>", "user_sub": "..."}`. Either the org or the tenant is required, and `user_sub` is always required. |
 |---|---|
 | 200 | `{tenant_id, aether_org_id, user_sub, role, suspended}` |
-| 403 `org_not_linked` | No live account is linked to the org, or the account is a personal one. |
+| 403 `org_not_linked` | No **active or suspended** account is linked to the org (a `provisioning` or archived account does not count), or the account is a personal one. |
 | 403 `tenant_mismatch` | The org and the tenant were both named, and they are not linked to each other. |
-| 403 `not_a_member` | The sub has no current `person` membership in the org, at org level or in any team (`team_member_history`, newest row ≤ now is `add`). |
+| 403 `not_a_member` | The sub has no current **org-level** `person` membership (`team_member_history` with `aether_team_id` NULL, newest row ≤ now is `add`). A team row is never enough. That covers a team-only legacy edge, which Aether's removal does not always retract; a member of an archived team; and an org-type Space owner who is not an org member. After Aether deletes an org, everyone gets this, because AIQG writes a `remove` for every membership the org had when `org.deleted` arrives. |
 | 400 `invalid_body` | The body is malformed. |
 | 500 | The endpoint could not answer. The proxy fails closed and never caches this. |
 
 A suspended account is answered 200 with `suspended: true`. The proxy then applies the suspended-account refusal it already uses for `TAS-Auth` callers.
 
-Membership is only as current as AIQG's copy of Aether's membership, which arrives through `aether.org.changes.v1`. A member who was just added is refused until the consumer applies the change. A member who was just removed keeps access for up to the proxy's 60 s verify cache plus the consumer lag.
+**How revocation works, and how long it takes.** Verify reads AIQG's copy of Aether's membership, which arrives through `aether.org.changes.v1`. A user loses access when two things have both happened:
+
+1. **The removal reaches the copy.** This takes as long as the consumer lag. That is normally seconds, but it is **unbounded while the consumer is down or behind**. The copy does not heal itself: the nightly reconcile only *reports* drift (`aiqg_team_history_drift`) and never writes. So an org-level removal that never reaches AIQG leaves the user verifying as a member until someone fixes the copy. An alert on that drift metric is the backstop.
+2. **The proxy's cache expires.** This takes up to `MCP_DELEGATION_CACHE_TTL`, 60 s, after step 1.
+
+These paths now revoke correctly:
+- org-level `org.member.removed`;
+- `org.deleted`, which writes removes for every membership;
+- team removals, which never mattered because a team row never grants access.
+
+A member who was just added is refused until their `org.member.added` is applied.
+
+**A link is never moved.** `PUT /admin/accounts/:tenant_id/aether-link` refuses to change an account that is already linked to a different org or user, with 409 `aether_link_change_refused`. `team_member_history` has no org column, and the first sync runs only into an empty history, so a relink would keep the old org's members and never load the new one's. To move a tenant, archive the account and create a new one. Linking an org to a second account was already refused by the unique index.
+
+**Only reachable in-cluster.** `/internal/*` is not on the internal Ingress (`api.aiqg.tas.scharber.com` now publishes `/api` and `/health` only), and `MCP_DELEGATION_VERIFY_*` belongs on the internal deployment's env, never the shared configmap. A test keeps both true.
 
 ## Database node properties
 
@@ -91,6 +127,8 @@ The routes are `POST /databases/:id/query`, `POST /databases/:id/test`, `GET /da
 | Bind parameters were sent | 400 | — |
 | The proxy returns 403: the org is not linked, the user is not a member, the credential is wrong, there is no stored connection (SEC-38), the tool is disallowed, the server is another tenant's, or the account is suspended | 403 | `mcp_proxy_forbidden` |
 | The proxy returns 503: the connection could not be resolved | 503 | — |
+| The caller lacks `read` in the space | 403 | `space_permission_required` |
+| The tenant's stored connection is no longer the one this row is bound to | 409 | `connection_changed_in_aiqg` |
 | `PUT /databases/:id` changes host, port, database, credentials, SSL mode or protocol on a shared connection | 409 | `connection_managed_in_aiqg` |
 
 A shared connection is served even when Aether last recorded its status as `Pending`.
@@ -139,6 +177,7 @@ What it does:
 | `no_credentials` | The login cannot be read. Add it in AIQG by hand. |
 | `unsupported` | The host, user, database or SSL mode holds characters that postgres-mcp cannot carry (only `A-Za-z0-9._-` is allowed). |
 | `stale_binding` | The node names a connection that AIQG no longer has. |
+| `refused` | The connection logs in with a SEC-44 superuser Secret (`dbhub-secrets`, `db-credentials-0d462710`, `db-credentials-335d056c`), or its host is shared TAS infrastructure (`*.tas-shared[.svc[.cluster.local]]`, `postgres-shared`) and not cleared with `-shared-hosts-allowed`. It is decided before the login is read, and never copied. |
 | `error` | AIQG refused the write, often on egress (see below), or the node write failed. Rerun to finish. |
 
 The exit code is 0 when nothing needs an operator, 2 otherwise, and 1 when the run itself failed.
@@ -176,13 +215,15 @@ Every flag defaults to off, and each step below is inert until the next one.
    - the route answers 401 without the token;
    - from a throwaway curl pod in `tas-mcp-prod` (the proxy image has no shell tools), with the token, a TAS-org member's sub returns 200, a non-member's sub returns 403 `not_a_member`, and an unknown org returns 403 `org_not_linked`.
 4. **tas-mcp second.** Set `MCP_DELEGATION_ENABLED=true`, `MCP_DELEGATE_TOKEN` and `MCP_DELEGATION_VERIFY_TOKEN` from the Secrets (`IDENTITY_ENABLED` and `MCP_TENANT_SERVERS` are already on), then roll by digest. Check:
-   - the boot log says `delegation: enabled (tool invoke only)`;
-   - `GET /api/v1/federation/servers` with the delegate header returns 403;
-   - a delegated `tools/list` on `postgres-mcp` as a TAS member returns 200, and as a non-member returns 403;
+   - apply the manifests: Service `prod-tas-mcp-delegated`, container port 8086, and the NetworkPolicy rule. Check the rule with `kubectl get netpol prod-tas-mcp-netpol -n tas-mcp-prod -o yaml`;
+   - the boot log says `delegation: enabled (tool invoke only, on its own listener)` and `Starting delegated-invoke listener`;
+   - on 8082, any request with the delegate header returns 403;
+   - from a throwaway pod in another namespace, 8086 cannot be reached;
+   - from an aether-backend pod, a delegated `tools/list` on `postgres-mcp` returns 200 as a TAS org member and 403 as a non-member;
    - `tas_mcp_delegation_decisions_total` moves.
 5. **aether-be third**, still with `AETHER_MCP_VIA_PROXY=false`: mount `aether-mcp-delegate-token` read-only and set `AETHER_MCP_DELEGATE_TOKEN_FILE`.
 6. **Egress (MCP-19)** for the org database's host, on the proxy and aiqg-dashboard-be together with the NetworkPolicy.
-7. **Migration job:** a dry run, then `-apply`, then a rerun that shows `already_shared` on every row.
+7. **Migration job:** a dry run, then `-apply`, then a rerun that shows `already_shared` on every row. Any `refused` row (SEC-44 or tas-shared) is re-created with a limited role or cleared explicitly first.
 8. **Flag on:** set `AETHER_MCP_VIA_PROXY=true` and roll aether-backend by digest.
 9. **Verify:**
    - A console query from a TAS-org space appears in `{namespace="tas-mcp-prod"}` and on Kafka as a `postgres-mcp` `tool_call` with `delegated_by=aether-be`, the TAS tenant and the user's sub. Its rows come from the org's database, not `tas_shared`.
