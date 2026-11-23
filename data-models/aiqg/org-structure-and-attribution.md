@@ -721,14 +721,16 @@ CREATE TABLE aiqg.mcp_connection (
 | POST | `/api/v1/org/proposals/:id/accept` \| `reject` | same |
 | GET | `/api/v1/org/actors/unassigned` | `aiqg-admin`, org owners — people, tokens, agents seen with no membership/placement |
 | GET | `/api/v1/me/scope` | signed-in user — the units the caller owns or manages (drives D7) |
-| GET | `/api/v1/home?scope=&period=` | org member (D11 applied) |
+| GET | `/api/v1/home?scope=&period=&widgets=` | org member or any team's member (D11 applied: members get their own teams, §11.1) |
 | GET | `/api/v1/metrics/units?view=billed\|reported\|involving\|served` | org member (D11 applied) |
 | GET / POST | `/api/v1/followups` | org member (lists those to, cc or by the caller; admins all) |
 | POST | `/api/v1/followups/:id/events` | recipient, cc or sender |
 | POST | `/api/v1/ask` (streamed) | org member, viewer-scoped |
 | GET / POST / DELETE | `/api/v1/home/pins` | the viewer |
-| GET / PUT | `/api/v1/home/layout` (resolved layout; PUT writes the viewer's own) | the viewer |
-| PUT / DELETE | `/api/v1/org/home-default` | org owner (fail-closed audit) |
+| GET / PUT / DELETE | `/api/v1/home/layout` (resolved layout; PUT writes the viewer's own; DELETE or a null layout resets) | the viewer |
+| PUT / DELETE | `/api/v1/org/home-default` | org owner (role `owner` on the org row; fail-closed audit) |
+| GET | `/api/v1/metrics/adoption`, `/metrics/vendor-mix`, `/metrics/compliance-posture`, `/metrics/visibility` (Home widget drills, §11.1) | org member |
+| GET | `/api/v1/imports/counts?period=` (imported traces by source) | signed-in tenant user |
 | GET | `/api/v1/mcp/servers` (platform servers plus the tenant's own, with health, tools and owning team) | org member |
 | POST / PUT / DELETE | `/api/v1/mcp/servers[/:id]` | org owner/admin; the owning team's manager for PUT (§9.6) |
 | POST | `/api/v1/mcp/servers/:id/test` | same as PUT |
@@ -813,6 +815,38 @@ CREATE INDEX ON aiqg.home_layout (tenant_id, owner_kind, owner_key, created_at D
 - **UI state:** layout and edit mode live in a Redux slice `homeLayout`, per the repo rule.
 
 **Data.** `GET /api/v1/home?scope=&period=&widgets=a,b,c` returns one section per requested widget, so the page still makes one call. Each widget's section is computed by the same query as its drill target, so the two numbers always agree.
+
+**Home API as built (Plan #22 5.2 and 5.3, aiqg-dashboard-be).** `period` is `24h | 7d | 30d | 90d | day | week | month` (default `7d`), or `from`/`to` in RFC3339. The response:
+
+```json
+{
+  "scope": "<unit id, the tenant id, or \"\" for a member in several teams>",
+  "from": "2026-11-16T12:00:00Z", "to": "2026-11-23T12:30:00Z",
+  "sections": [{"widget": "vendor_mix", "data": {}}],
+  "skipped":  ["tools_overview"],
+  "withheld": [{"widget": "savings", "reason": "org_scope_only"}],
+  "viewer":   {"mode": "member", "teams": ["<team id>"]}
+}
+```
+
+- `skipped` lists widget names the backend does not build; never an error. `withheld` lists known widgets this viewer or scope cannot have: `org_scope_only` (savings and visibility have no per-team attribution), `member_scope_needs_one_team` (a member in several teams, or none, with no scope picked), `source_not_configured` (the backing store is not wired in that deployment).
+- **Members (D11).** A viewer with no org owner/admin role, no team they manage, and not `aiqg-admin` or a platform operator, is `mode: "member"`. Their page is their team; with several teams the per-team widgets are withheld and `units` and `needs_attention` cover each team. They may pick a team they belong to, or one under it, as `scope`; the org or another team is `403 scope_not_allowed`. A team member with no org-level membership row is admitted as a member. No section carries person rows.
+- Each widget drills to an endpoint that returns the same numbers for the same `period`/`from`/`to`/`scope`:
+
+| Widget | Section | Drill (same numbers) |
+|---|---|---|
+| `needs_attention` | `[Attention]`; each item's `owners` (subs) also come as `owner_people: [{"sub","name","email","display"}]`, in the same order. `display` is the name, else the email, else `""` | `/metrics/units`, then the metric's report |
+| `units` | `[Card]` (the `/metrics/units` unit plus `previous_cost_usd`), with `manager_people` like `owner_people`. A member gets their own team's card | `/metrics/units?scope=` |
+| `clear_scorecard`, `data_safety`, `spend_forecast` | unchanged (4.3) | `/metrics/units`, `/metrics/data-safety` |
+| `savings` | `{scope, from, to, total_saved_usd, levers: {exact_cache_usd, semantic_cache_usd, prompt_cache_usd, reduce_at_source_usd, routing_usd: null}, routing_note, spend_usd, report}`. `report` is the `/reports/caching` body verbatim; `total_saved_usd` is the Caching page's "All levers"; `spend_usd` is the org row's `total.cost_usd` | `/reports/caching?from=&to=` (from/to added) |
+| `adoption` | `{scope, from, to, current: {people, apps, agents}, previous: {people, apps, agents}, members, active_members, member_share_pct, basis}`; counts only | `/metrics/adoption` (new) |
+| `vendor_mix` | `{scope, from, to, requests, cost_usd, top_vendor, top_vendor_share, single_vendor, single_vendor_threshold: 0.9, vendors: [{vendor, requests, success, cost_usd, spend_share, uptime_pct, models: [{model, requests, cost_usd, spend_share}]}]}`; shares are 0-1, uptime 0-100, nil without data | `/metrics/vendor-mix` (new) |
+| `compliance_posture` | `{scope, from, to, active_bundles, enforcing_bundles, bundles: [{id, name, mode, rules_enabled, rules_enforced, rules_log_only}], rules: {enabled, enforced, log_only, disabled, high_severity}, high_severity_findings, nist: {secure_resilient, privacy_enhanced, valid_reliable, safe} \| null}`. Enforced = enabled, `redact` or `block`, in an `enforce` bundle; every other enabled rule is log-only. `nist` is the `/reports/preview` scan, org scope only | `/metrics/compliance-posture` (new) |
+| `visibility` | `{scope, from, to, gateway_requests, imported_traces, imported_turns, imported_by_source: [{source, traces, turns}], known_apps, routed_apps, unrouted_apps: [..], routed_share_pct}`. Known apps are team-history `source_app` members; org scope only | `/metrics/visibility` (new), `/imports/counts` (new) |
+| `follow_ups` | `{available: false, reason, open: 0, overdue: 0, items: []}` until P6 | Follow-ups (P6) |
+| `my_usage` | the `/me/usage` body over the window (capped at 90 days), for the caller's own `sub` | `/me/usage?from=&to=` (from/to added) |
+
+**Layouts.** `GET /api/v1/home/layout` resolves user → org default → system and returns `{source: "user" | "org_default" | "system", layout, layout_version, user, org_default, can_set_org_default}`, where `user` and `org_default` are `{layout, layout_version, updated_at, updated_by}` or `null`. `system` comes with `layout: null`: the per-role defaults are versioned in the UI. `PUT /api/v1/home/layout` takes `{"layout": [...], "layout_version": n}` (`layout_version` defaults to 1); `{"layout": null}` or `DELETE` is Reset. Entries are shape-checked (an array of at most 40 objects, each with a `widget` name of 1-64 characters and `w` from 1 to 12, 32 KiB in all); unknown widget names are kept. `PUT / DELETE /api/v1/org/home-default` take the same body and are for an org **owner** only (role `owner` on the org row), audited as `org.home_default.set` / `org.home_default.cleared` in the same transaction: if the audit row cannot be written, nothing is. Every write returns the resolved layout. Storage is migration `065_home_layout.sql` (the plan's `060` was taken).
 
 ### 11.2 Other surfaces
 
