@@ -666,6 +666,8 @@ So a customer cannot connect their own Salesforce, Qualtrics or database, and no
   - **allowed tools**: an allowlist over the server's `tools/list`, so write tools can be switched off, as the EV pilot requires for CRM servers;
   - owning team, health-check interval, and enabled or disabled.
 
+  The owning team is not a setting of its own: it is the server's `mcp_server` membership in `team_member_history` (§9.5, "Who owns the server"), the same rows `PUT /api/v1/tools/servers/:id/owner` writes. `/api/v1/mcp/servers` reads `owner_team_id` from that history and writes it through the same writer, audit (`org.mcp_server.owner_set`) and rule (an org owner or admin, or a platform operator; an active team or none), so the two APIs cannot disagree (AIQG-87, aiqg-dashboard-be migration 064). Deleting a tenant server ends its ownership in the same transaction.
+
   **Test connection** runs `initialize` and `tools/list` with the tenant's connection and shows the tools found.
 - **Aether moves onto the proxy.** aether-be calls the proxy's invoke with the org's token instead of each server's URL. Its database connections become proxy connections, so both products share one store. Until then, Aether traffic stays invisible to §9.5, and the Tools page's coverage line says so.
 
@@ -676,7 +678,7 @@ CREATE TABLE aiqg.mcp_server_config (
   id             UUID PRIMARY KEY,
   tenant_id      UUID NOT NULL,                 -- the org that owns it
   server_id      TEXT NOT NULL,                 -- the proxy's id
-  owner_team_id  UUID,                          -- Aether team id
+  -- no owner column: the owning team is team_member_history (member_kind 'mcp_server'); AIQG-87 dropped owner_team_id
   spec           JSONB NOT NULL,                -- endpoint, protocol, auth type, reduce, allowed_tools, health check
   enabled        BOOLEAN NOT NULL DEFAULT true,
   version        INT NOT NULL,
@@ -699,7 +701,7 @@ CREATE TABLE aiqg.mcp_connection (
 );
 ```
 
-- A reconcile job pushes `mcp_server_config` to the proxy and reports drift, like the §5.1 history reconcile.
+- A reconcile job pushes `mcp_server_config` to the proxy and reports drift, like the §5.1 history reconcile. The proxy record's `owner_team_id` (informational to the proxy) is pushed from team history, so an owner change made on the Tools page reaches the proxy too.
 - The proxy fetches a connection through an internal endpoint, `/internal/mcp/connections/resolve`, which accepts only the service token. It caches the connection in memory for 60 seconds and never persists it.
 
 ---
