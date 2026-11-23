@@ -387,7 +387,7 @@ Because each org is its own tenant, the executive view in D7 ("each org they man
 - **The viewer's orgs** come from org membership in AIQG's copy (`team_member_history`, per D14), never from anything in the request:
   - the JWT `tenant_id` tenant, always, as the default;
   - every other org where the person holds the org role `owner`, `admin` or `billing`;
-  - every org where they are `owner`/`admin` of at least one team ("manages a team").
+  - every org where they are `owner`/`admin` of at least one **active** team ("manages a team") and still have an org-level row. Both conditions matter: `org.deleted` and `team.archived` append no member removals to the copy, so a manager row can outlive its team, or the person's place in the org.
   - The org's account must exist and be `active`.
 - **A plain org `member`, or a team `member`/`viewer`, does not qualify.** Decided for P2b, and the reason is what a switch grants. A switched request sees everything a native user of that tenant sees: Traffic Explorer, tokens, the audit log, policies. The server has no narrower "member view" yet; D11 hides person rows on the org routes, and nothing else. Admitting members would give every Aether org member, including someone added to one team for a notebook, the org's full AI traffic. Revisit when the member routes narrow to the member's own teams.
 - **The active tenant** is chosen per request with the header `X-AIQG-Tenant: <tenant uuid>`, sent on `/api/v1` paths only, by an org switcher in the header (as on GitHub).
@@ -768,11 +768,11 @@ CREATE TABLE aiqg.mcp_connection (
 `GET /api/v1/me/orgs` returns `{orgs, active_tenant_id, supports_all}`:
 - `orgs`: `[{tenant_id, aether_org_id, name, kind, roles, default}]`.
   - The JWT `tenant_id` tenant is always present, always first, and is the **only** entry with `default: true`.
-  - The others qualify by the §5.4 rule (org `owner`/`admin`/`billing`, or `owner`/`admin` of a team) and have an `active` account.
+  - The others qualify by the §5.4 rule (org `owner`/`admin`/`billing`, or `owner`/`admin` of an active team while still in the org) and have an `active` account.
   - `tenant_id` is lower-case.
   - `aether_org_id` and `name` come from the account (`""` when unset).
   - `kind` is `personal` only for an account linked as personal, else `org`. A personal entry has no name; the UI labels it "Personal".
-- `roles`: the caller's org roles in that tenant, from `owner`, `admin`, `billing`, `member`, plus `team_manager` when they are `owner`/`admin` of at least one team there.
+- `roles`: the caller's org roles in that tenant, from `owner`, `admin`, `billing`, `member`, plus `team_manager` when they are `owner`/`admin` of at least one active team there and still in the org.
   - Team roles are not listed individually.
   - Realm roles (`aiqg-admin` and the rest) never appear.
   - The default entry may have `[]`.
@@ -790,7 +790,7 @@ CREATE TABLE aiqg.mcp_connection (
 - A tenant not in the caller's `/me/orgs`: `403 tenant_not_allowed`. The body is exactly `{"error":{"code":"tenant_not_allowed","message":"…"}}`, and a `tenant.switch.refused` row goes to the caller's own tenant (`audit-log-entry.md`).
 - An AIQG data-plane token naming any tenant other than its own: `403 tenant_not_allowed`, because a token belongs to one tenant for life.
 - A route that is not *switchable* (§5.4): `403 tenant_switch_unsupported`. The UI should show "only in your own organization" and not retry.
-- Otherwise the request is served for that tenant, with the caller's org roles there and **no realm roles**.
+- Otherwise the request is served for that tenant, with the caller's org roles there and **no realm roles**. Every audit row it writes in that tenant carries `metadata.acting_from_tenant` (the caller's own tenant), so the org's admins can tell a person acting from another org.
 - Untenanted routes ignore the header: `/health*`, `/metrics`, `/api/v1/logs`, `/api/v1/notifications/unsubscribe` and `/internal/*`.
 - The classification of every route, with a reason each, is `aiqg-dashboard-be` `internal/tenancy/routes.go`. Switchable routes are:
   - every tenant read, except alert channels (they return webhook URLs), session text (`/sdlc/turns/:id/text`, `/imports/traces/:id`), and the audit, admin and activity surfaces;
