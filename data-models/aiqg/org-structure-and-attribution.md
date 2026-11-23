@@ -721,6 +721,7 @@ CREATE TABLE aiqg.mcp_connection (
 | POST | `/api/v1/org/proposals/:id/accept` \| `reject` | same |
 | GET | `/api/v1/org/actors/unassigned` | `aiqg-admin`, org owners — people, tokens, agents seen with no membership/placement |
 | GET | `/api/v1/me/scope` | signed-in user — the units the caller owns or manages (drives D7) |
+| GET | `/api/v1/org/people/:sub/default-team` | the person; a manager of that team or above; org owner/admin; `aiqg-admin` (D11) |
 | GET | `/api/v1/home?scope=&period=` | org member (D11 applied) |
 | GET | `/api/v1/metrics/units?view=billed\|reported\|involving\|served` | org member (D11 applied) |
 | GET / POST | `/api/v1/followups` | org member (lists those to, cc or by the caller; admins all) |
@@ -733,6 +734,47 @@ CREATE TABLE aiqg.mcp_connection (
 | POST / PUT / DELETE | `/api/v1/mcp/servers[/:id]` | org owner/admin; the owning team's manager for PUT (§9.6) |
 | POST | `/api/v1/mcp/servers/:id/test` | same as PUT |
 | GET / POST / DELETE | `/api/v1/mcp/connections[/:id]` (POST to an existing id rotates; secrets are write-only) | org owner/admin |
+
+### 10.1 Contract details (as built, 5.4 and 5.5)
+
+**Unit filter (`?scope=<unit id>`)** on `GET /api/v1/events`, `/sdlc/summary`, `/sdlc/turns`, `/sdlc/workflows` and `/sdlc/sessions`.
+
+How a scope is resolved and gated, the same as `/metrics/units`:
+- The caller must be an org member, a platform operator or aiqg-admin. Otherwise `403 not_org_member`.
+- The scope must be the tenant id (the whole org, so nothing is narrowed) or a team in the history copy. Otherwise `404 unknown_unit`.
+- A team scope holds the team and every team below it, which is a unit's `total`.
+- With the org structure off, a scope is `400 org_structure_disabled`.
+
+Which rows a unit holds:
+- **Events:** the event is filed under its Reported unit (§2.4, §4.2) at the **start of its hour**, as the rollup buckets it.
+  - So `/events?scope=X` returns exactly the requests that `/metrics/units?view=reported` counts in X's total for the same window.
+  - A scoped feed reads Timescale only: `503 scope_unavailable` without it, and it never falls back to Loki.
+  - The response adds `scope` and `scan_capped`. `scan_capped` is true when 50k candidate rows were examined and the list may be short of `limit`.
+- **SDLC turns** (summary, turns): the turn is filed under the default team of `sdlc_turn.actor_sub` at the turn's hour. Turns carry no gateway token, so placement never applies. A turn with no actor is under no team.
+  - The summary's agreement and graduation figures stay tenant-wide.
+- **Sessions:** a session is in the unit when any of its turns in the window is, and it is shown whole.
+- **Workflows:** a workflow is in the unit when its owner (§6) is. This is the Served view.
+
+**Workflow owner.** `GET /sdlc/workflows` and `/sdlc/workflows/:id` return:
+- `owner_unit_id`: always present. `""` means no owner, and the tenant id means the org itself.
+- `owner_unit_name`: the team's name, omitted when empty.
+
+**D11, enforced by the server** (default `org_person_visibility = managers`; the tenant setting is not built yet):
+- `GET /org/teams`: each team has `member_count` and `members_visible`.
+  - `members` (each `{sub, role, since}`) is listed only to aiqg-admin, org owners and admins, and managers of that team or of a team above it.
+  - Everyone else, including platform operators, gets `[]`.
+  - `since` is when the membership's newest row took effect.
+- `set_by` is blanked outside D11 on `GET /tokens/:id/placement`, `/org/teams/:id/targets` and `/org/ticket-prefixes`. On placement history it is also kept on the rows the viewer wrote.
+- `GET /api/v1/org/people/:sub/default-team` returns `{person_sub, team_id, valid_from}`. It is open to the person, managers of that team or a team above it, org owners and admins, and aiqg-admin.
+
+**`GET /me/scope`** adds:
+- `platform_operator` (the `aiqg-platform-operator` realm role).
+- The caller's `default_team_id` and `default_team_since`.
+- `aether_org_id`: the tenant's linked Aether organization, `""` when unlinked.
+
+**`GET /org/actors/unassigned`:** each token carries `cost_usd_30d`. This is its spend over the last 30 days from the actor rollup's effective cost, the column `/metrics/units` sums. It is null without Timescale. Tokens are ordered by it, highest first.
+
+**`POST /account/tokens`** takes `team_id`. See `token.md` §4.
 
 Every write is tenant-scoped from the JWT and audited fail-closed (§5.1). The `/admin/users` fix (F1) is a precondition for every member picker.
 
