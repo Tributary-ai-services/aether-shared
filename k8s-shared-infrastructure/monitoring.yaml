@@ -951,6 +951,43 @@ data:
                 of the daily cap. It will stop grading when the cap is reached and resume at
                 UTC midnight.
 
+  # Vendor prompt caching, auto mode (AIQG-22, tas-llm-router #100). The source
+  # of truth is tas-llm-router/deploy/monitoring/prompt-cache-alerts.yaml, next to
+  # the code that emits the series; this is the loaded copy. Only the zero-hit
+  # alert is loaded. Its companion PromptCacheWritesWithoutReads is NOT: on
+  # 2026-11-24 it would have fired on load (anthropic: ~55.6k cache-write tokens,
+  # 0 reads in 6h), and whether that is a real signal is a separate decision.
+  prompt-cache-alerts.yml: |
+    groups:
+      - name: prompt-cache
+        rules:
+          # The silent failure prompt caching exists to end: the gateway places
+          # breakpoints (mode=auto) yet the vendor reports zero cache reads, so
+          # every request pays full price. `unless` rather than `and ... == 0`:
+          # a read counter that never increments may never be exported for that
+          # vendor, and `and` against an absent series matches nothing, so the
+          # alert would stay silent in exactly the case it exists for.
+          # Quiet today by design: only mode=passthrough carries traffic.
+          - alert: PromptCacheAutoZeroHits
+            expr: |
+              sum by (vendor) (increase(aiqg_prompt_cache_requests_total{mode="auto"}[1h])) > 100
+              unless
+              sum by (vendor) (increase(aiqg_prompt_cache_read_tokens_total[1h])) > 0
+            for: 30m
+            labels:
+              severity: warning
+              service: tas-llm-router
+              component: aiqg-prompt-cache
+            annotations:
+              summary: "Prompt-cache auto mode is placing breakpoints but getting zero reads ({{ $labels.vendor }})"
+              description: >
+                Over the last hour the gateway applied mode=auto to more than 100
+                requests for {{ $labels.vendor }} but the vendor reported no
+                cache-read tokens, so those requests are paying full price. Likely
+                causes: a breakpoint below the model minimum, after a volatile
+                block, or voided by switching models mid-conversation. Check
+                internal/server/prompt_cache.go placement for {{ $labels.vendor }}.
+
   # Availability and quality alerting for tas-llm-router.
   #
   # Before these existed, the only alerts touching this service covered the
