@@ -288,7 +288,8 @@ CREATE TABLE aiqg.team_member_history (
   role            TEXT,               -- Aether role name, persons only
   op              TEXT NOT NULL CHECK (op IN ('add','remove')),
   valid_from      TIMESTAMPTZ NOT NULL,
-  event_id        TEXT NOT NULL UNIQUE
+  event_id        TEXT NOT NULL UNIQUE,
+  aether_org_id   TEXT                -- the Aether org the row came from (migration 067); NULL = AIQG-originated
 );
 CREATE INDEX ON aiqg.team_member_history (tenant_id, member_kind, member_key, valid_from DESC);
 CREATE INDEX ON aiqg.team_member_history (tenant_id, aether_team_id, valid_from DESC);
@@ -298,7 +299,12 @@ CREATE INDEX ON aiqg.team_member_history (tenant_id, aether_team_id, valid_from 
 - **Baggage `user_key` mapping** is the one membership AIQG originates (Aether has no such concept): an owner maps a pseudonymous key to a person, and AIQG writes that row directly, with `event_id = 'aiqg:<uuid>'`.
 - **People are Aether users by Keycloak `sub`.** Aether's `User.keycloak_id` joins AIQG's `owner_sub`; the consumer writes the `sub`, never the Aether user id, so events and membership use one key.
 - **Effective membership at time t** for a `(member, team)` pair = its newest row with `valid_from ≤ t`; the member is in the team if that row's `op` is `add`. A person can be in many orgs and many teams at once.
-- **First sync** backfills the current Aether state with `valid_from = joined_at` (or the team's `created_at`). A nightly reconcile compares the copy with Aether's API and reports any difference as drift (D13); it never silently overwrites.
+- **First sync** backfills the current Aether state with `valid_from = joined_at` (or the team's `created_at`). It runs once per (tenant, linked org), so a tenant relinked to another org gets the new org's first sync.
+- **The nightly reconcile** (at boot, then every 24 h) compares the copy with Aether's API and reports every difference as drift (D13). It writes only what takes access away, as new rows at the snapshot's time:
+  - a `remove` for a person membership the copy holds and Aether does not;
+  - a demotion to Aether's role when the copy holds a gating role (`owner`, `admin`, or `billing` at org level) and Aether no longer gives one.
+  It never adds a member or raises a role: that drift stays reported, for the events or a person to fix. An org whose snapshot is `404` **and** which Aether's org list no longer contains is reconciled as empty, so all its members are removed. A `404` alone is not enough, because a misrouted Aether URL answers `404` for every org.
+- **`org.deleted`** appends a `remove` for every current member of the tenant, as of the deletion. (Aether archives the org's teams and deletes the org, but emits no member removals.)
 - **Org membership is implied by team membership**, as on GitHub: Aether adds an org `member` edge when someone joins a team in an org they are not in.
 - **Child teams**: a child team's members are not direct members of the parent, but the parent's rollup includes the child's (as GitHub's child teams inherit access but not membership).
 - **Archived teams** roll up to their parent (or the org) in reports.
@@ -384,10 +390,10 @@ Because John's scope holds one org, Home (D7) opens one level down on the produc
 
 Because each org is its own tenant, the executive view in D7 ("each org they manage") spans **several tenants**. A sign-in carries exactly one tenant (the JWT `tenant_id` claim), and `TenantRequired` (`internal/middleware/auth.go`) scopes every query to it. The multi-org viewer (P2b, **built**, behind `MULTI_ORG_VIEWER`, default off) lets a request name another tenant:
 
-- **The viewer's orgs** come from org membership in AIQG's copy (`team_member_history`, per D14), never from anything in the request:
+- **The viewer's orgs** come from org membership in AIQG's copy (`team_member_history`, per D14), never from anything in the request. Only rows from the Aether org the tenant is linked to **now** (`account.aether_org_id = team_member_history.aether_org_id`) count, and the filter applies before "newest row wins":
   - the JWT `tenant_id` tenant, always, as the default;
   - every other org where the person holds the org role `owner`, `admin` or `billing`;
-  - every org where they are `owner`/`admin` of at least one **active** team ("manages a team") and still have an org-level row. Both conditions matter: `org.deleted` and `team.archived` append no member removals to the copy, so a manager row can outlive its team, or the person's place in the org.
+  - every org where they are `owner`/`admin` of at least one **active** team ("manages a team") and still have an org-level row. Both conditions matter: `team.archived` appends no member removals, and an org-level removal does not remove the person's team rows, so a manager row can outlive its team, or the person's place in the org. The org-level row locks no one out: every way Aether adds a team member goes through `addMemberTx`, which adds the org `member` edge in the same transaction (aether-be `internal/services/team_joining.go`).
   - The org's account must exist and be `active`.
 - **A plain org `member`, or a team `member`/`viewer`, does not qualify.** Decided for P2b, and the reason is what a switch grants. A switched request sees everything a native user of that tenant sees: Traffic Explorer, tokens, the audit log, policies. The server has no narrower "member view" yet; D11 hides person rows on the org routes, and nothing else. Admitting members would give every Aether org member, including someone added to one team for a notebook, the org's full AI traffic. Revisit when the member routes narrow to the member's own teams.
 - **The active tenant** is chosen per request with the header `X-AIQG-Tenant: <tenant uuid>`, sent on `/api/v1` paths only, by an org switcher in the header (as on GitHub).
@@ -400,9 +406,12 @@ Because each org is its own tenant, the executive view in D7 ("each org they man
   - **home only:** answers a switched request `403 tenant_switch_unsupported`. Covers tenant-wide writes with no org-role gate (tokens, policies, caps, channels, experiments), realm-role surfaces, cross-tenant operator surfaces, audit routes that take their tenant from the path, and proxies that forward the caller's own token (Aether teams, agent-builder).
   - **A route missing from the table is refused**, so a new route fails closed until someone classifies it.
 - **`aiqg-admin` no longer implies every org.** With the viewer on, the cross-tenant activity report (`/activity/accounts`, `/activity/admin/daily`) needs `aiqg-platform-operator`.
-- **Revocation latency.** A person removed in Aether keeps access for at most: the `aether.org.changes.v1` consumer lag (`aiqg_team_history_events_total`), plus 30 s.
-  - The nightly reconcile reports drift (`aiqg_team_history_drift`) and never overwrites. A lost removal event therefore leaves access in place until the drift is acted on.
-  - Treat a non-zero drift on an org-role row as a security alert, not a data-quality one.
+- **Revocation.** The per-person list is cached for 30 s, so every case below ends with "plus 30 s":
+  - **Removed in Aether:** the `aether.org.changes.v1` consumer lag (`aiqg_team_history_events_total`).
+  - **Org deleted:** the same; `org.deleted` removes every member.
+  - **Tenant relinked to another org** (`PUT /api/v1/admin/accounts/:tenant_id/aether-link`): immediate. The old org's rows stop counting at once; no removal rows are needed, and relinking back restores them.
+  - **Removal event lost, or never sent:** until the next reconcile appends the removal, so up to about 24 h. A reconcile that cannot reach Aether heals nothing, so an Aether outage extends this for as long as it lasts.
+  - Drift on an org-role row (`aiqg_team_history_drift`) is still worth an alert: `member_missing` and a role raised in Aether are never healed by the reconcile.
 - **Personal scopes (D5) are not offered yet.** No AIQG account is provisioned per person. A `personal` account exists only when an operator links one by hand, and personal scopes have no rows in `team_member_history`. So `/me/orgs` lists a personal scope only when it is the JWT tenant.
 - **The all-orgs Home is not built.** It would be the one cross-tenant read: the server fans out one scoped query per org the viewer may see and returns the cards side by side. No query ever spans two tenants at once, and nothing is summed across orgs except on that page, for that viewer. Until it ships, `/me/orgs` returns `supports_all: false`, and every page, Home included, shows one org at a time.
 - **The gate.** `cmd/server/tenancy_gate_test.go` walks every route the production router mounts (`engine.Routes()` of the router `main` builds), with two orgs and four people:
@@ -410,7 +419,7 @@ Because each org is its own tenant, the executive view in D7 ("each org they man
   - the owner of both;
   - an `aiqg-admin` of A;
   - a plain member of B.
-  It asserts that the outsiders get nothing of B with or without the header, and that no outsider request changed any of B's rows. It asserts that the owner is served B's rows only, and that with the flag off the header changes no response. It runs in CI against a PostgreSQL service container and cannot skip there.
+  It asserts that the outsiders get nothing of B with or without the header, and that no outsider request changed any of B's rows. Every org-gated write is sent with a valid body and a real resource of B, first by B's billing member, who must get a `403` at the role check and change nothing, then by B's owner, whose write must change B's rows. The owner's success is what shows the billing refusal is about the role, not a malformed request. It asserts that the owner is served B's rows only, and that with the flag off the header changes no response. It runs in CI against a PostgreSQL service container and cannot skip there.
 
 ---
 

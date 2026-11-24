@@ -394,6 +394,7 @@ Today a server is added only by `kubectl apply` of a `FederatedMCPServer`. The f
 - **Built (backend), 2026-11-23**, not yet merged or deployed. The details are in the design doc §5.4 and §10.1.
   - The gate is `cmd/server/tenancy_gate_test.go`. It walks the 243 routes of the router `main` builds, as five people: A's member, the owner of both, an `aiqg-admin` of A, B's plain member, and an `aiqg-admin` who is B's billing member.
   - It checks that no outsider request changes B's rows, and that the flag-off router answers identically with and without the header.
+  - Review fixes: a relink revokes the old org's people at once (rows carry their Aether org, migration 067); `org.deleted` removes every member; the reconcile appends removals and demotions (never grants); every org-gated write is checked with a valid body against an owner positive control.
   - It runs in CI on a PostgreSQL service container and fails there rather than skip.
   - Not built: `/home?scope=all` (`supports_all: false`) and personal scopes.
 
