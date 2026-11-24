@@ -120,9 +120,9 @@ The routes are `POST /databases/:id/query`, `POST /databases/:id/test`, `GET /da
 | Condition | Status | `code` |
 |---|---|---|
 | No space context, a personal space, or an org space with no `Organization` | 403 | `mcp_space_required` / `mcp_org_space_required` |
-| The org has no entry in the token file | 403 | `mcp_org_not_linked` |
-| The token file is missing, unset or invalid | 503 | — |
+| The delegate credential (`AETHER_MCP_DELEGATE_TOKEN_FILE`) is missing, unset or invalid, or the proxy rejects it | 503 | — |
 | The connection has no `mcp_connection_id`, or one for another server | 409 | `connection_not_shared` |
+| `POST /databases/:id/query` only: the connection has no `mcp_connection_id` and its status is `Pending` (checked before the row above) | 400 | `VALIDATION_ERROR` ("Database connection not yet established") |
 | The database type is not `postgres` | 400 | — |
 | Bind parameters were sent | 400 | — |
 | The proxy returns 403: the org is not linked, the user is not a member, the credential is wrong, there is no stored connection (SEC-38), the tool is disallowed, the server is another tenant's, or the account is suspended | 403 | `mcp_proxy_forbidden` |
@@ -163,7 +163,7 @@ What it does:
 
 1. It reads `tenant_id` from the AIQG token. AIQG verifies the token and writes into that tenant, so the job cannot choose the destination.
 2. It finds that tenant's org link (`GET /api/v1/admin/accounts/aether-links`). It refuses to run if the tenant is unlinked, is linked to a person rather than an org, or if the link's `aether_tenant_id` disagrees with the org's.
-3. It lists the org's PostgreSQL `Database` nodes. These are the nodes in the legacy org space (`space_id` = the org id) and the nodes in any `Space` the org owns through `HAS_SPACE`, constrained to the org's Aether tenant.
+3. It lists the org's PostgreSQL `Database` nodes, each in the tenant of its own space, which is the tenant the console reads it under. These are the nodes in the legacy org space (`space_id` = the org id, in the org's tenant) and the nodes in any `Space` the org owns through `HAS_SPACE` (`space_id` = the space id, in **that space's** tenant: every such space has its own `tenant_<n>`, never the org's). A space that another `Organization` also claims through `HAS_SPACE` is skipped. Until aether-be#78 (AE-39) the job required the org's tenant on HAS_SPACE nodes too, and so found nothing in live data.
 4. It plans each one, prints the plan, and writes only with `-apply`. A write is `POST /api/v1/mcp/connections` with kind `database_dsn`, params `{argument: "_connection", format: "object"}`, the label `<name> (aether-db:<id>)` and the secret `postgres://user:pass@host:port/db?sslmode=…`. It then sets the three node properties.
 
 | Action | Meaning |
@@ -177,7 +177,7 @@ What it does:
 | `no_credentials` | The login cannot be read. Add it in AIQG by hand. |
 | `unsupported` | The host, user, database or SSL mode holds characters that postgres-mcp cannot carry (only `A-Za-z0-9._-` is allowed). |
 | `stale_binding` | The node names a connection that AIQG no longer has. |
-| `refused` | The connection logs in with a SEC-44 superuser Secret (`dbhub-secrets`, `db-credentials-0d462710`, `db-credentials-335d056c`), or its host is shared TAS infrastructure (`*.tas-shared[.svc[.cluster.local]]`, `postgres-shared`) and not cleared with `-shared-hosts-allowed`. It is decided before the login is read, and never copied. |
+| `refused` | The connection logs in with a SEC-44 superuser Secret (`dbhub-secrets`, `db-credentials-0d462710`, `db-credentials-335d056c`), or its host is shared TAS infrastructure (`*.tas-shared[.svc[.cluster.local]]`, `postgres-shared`) and not cleared with `-shared-hosts-allowed`; both are decided before the login is read. Also refused: a stored login of `tasuser` or `postgres` in any Secret (SEC-43/SEC-44). A refused connection is never copied. |
 | `error` | AIQG refused the write, often on egress (see below), or the node write failed. Rerun to finish. |
 
 The exit code is 0 when nothing needs an operator, 2 otherwise, and 1 when the run itself failed.
