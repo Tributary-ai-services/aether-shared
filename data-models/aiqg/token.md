@@ -107,12 +107,13 @@ The valid set is enforced in Go (`models.ValidTokenScopes`), not in SQL, so addi
 - Scopes are de-duplicated and sorted before storage, so the stored value and the audit row are stable.
 - `expires_in_days` must be between 0 (never) and 365.
 - Omitting `scopes` and `expires_in_days` gives exactly the pre-036 token.
-- `team_id` (Plan #22 5.5) places the token in a team at issue, with the rule of `PUT /api/v1/tokens/:id/placement`:
-  - The caller must manage that team, or be an org owner or admin, or a platform operator. Otherwise `403 placement_forbidden`.
-  - The team must be an active team of the org. Otherwise `422 team_not_in_org`.
+- `team_id` (Plan #22 5.5) places the token in a team at issue. **Since AIQG-101 (aiqg-dashboard-be 0.45.0) it is required** whenever the org structure is on, so no new token is unassigned:
+  - Missing, blank, archived or not a team of the org: `400 team_required`. An org with no teams at all: `409 org_has_no_teams` (create one in Settings ▸ Organization first).
+  - The caller must be a member or manager of that team, an org owner or admin, or a platform operator. Otherwise `403 placement_forbidden`. (Members were added by AIQG-101; moving an existing token still needs a manager.)
   - The placement row starts at the token's `created_at`. It and its `org.token.placed` audit commit in the token's own transaction, so a failed placement leaves no token.
-  - With `ORG_STRUCTURE_ENABLED` off, a `team_id` is `400 org_structure_disabled`.
-  - Omitting it gives an unplaced token, as before.
+  - With `ORG_STRUCTURE_ENABLED` off, a `team_id` is `400 org_structure_disabled`, and tokens are issued without one as before.
+- Tokens AIQG mints for itself (demo-flow runs, SDLC Mode C ticks, audit asks) are placed in the org's default team (`aiqg.org_default_team`, `GET/PUT /api/v1/org/default-team`, owners/admins, audited `org.default_team.set`). With no usable default they are refused `team_required` like a person who picks none.
+- Tokens issued before AIQG-101 with no team keep working (validation is unchanged) and are never placed automatically; org owners/admins place them from Settings ▸ Organization ▸ Place these tokens, and get one deduplicated inbox message (`org.tokens.unplaced`) while any remain.
 
 ---
 
@@ -132,8 +133,8 @@ issued ──(DELETE)──> revoked          never resolves again
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `GET` | `/api/v1/account/tokens` | JWT | Active tokens for the tenant, newest first. `scopes` is always an array, never null. |
-| `POST` | `/api/v1/account/tokens` | JWT | Body `{label, source_app, scopes?, expires_in_days?, team_id?}`. 201 with `plaintext_bearer`, shown once, and `team_id` when placed (§4). |
+| `GET` | `/api/v1/account/tokens` | JWT | Active tokens for the tenant, newest first. `scopes` is always an array, never null. `team_id` is the placement in effect now (absent = unplaced). **D11 (SEC-47, 0.44.1):** `owner_sub` / `owner_email` are returned only to `aiqg-admin` (never in a switched org), org owners/admins, managers of the token's team or a team above it, and the owner; anyone else gets the token with `owner_hidden: true` and no owner fields. |
+| `POST` | `/api/v1/account/tokens` | JWT | Body `{label, source_app, scopes?, expires_in_days?, team_id}`. `team_id` is required with the org structure on (§4, AIQG-101). 201 with `plaintext_bearer`, shown once, and `team_id`. |
 | `DELETE` | `/api/v1/account/tokens/:id` | JWT | Tenant-scoped: 404 for another tenant's token. |
 | `POST` | `/internal/auth/validate` | Internal-Auth | Body `{bearer}`. 200 `{token_id, tenant_id, aiqg_account_id, source_app, suspended, label?, owner_sub?}`, 401 unknown, 403 suspended, 500 resolver down. `label` and `owner_sub` (052) are omitted when empty. |
 

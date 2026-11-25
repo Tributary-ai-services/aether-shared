@@ -355,15 +355,18 @@ CREATE TABLE aiqg.person_default_team (
 
 - **A token is in exactly one tenant for life**, optionally one team at a time. This is what makes Billed totals add up despite many-to-many people: each org's total is simply its tenant's total, as today.
 - **Moving a token to another org is not supported**: issue a new token in the other org. Moving tenants would move billed history across an isolation boundary.
-- **Issuing a token** asks which of the issuer's orgs (or Personal) it belongs to, and optionally a team. The issuer must be a member of that org; placing into a team requires being its manager or an org owner/admin.
-- **Existing tokens** stay where they are: all 631 of ours are in `65ea3247…`, which §5.0 links to the TAS org. Owners then place them in teams; a placement back-dated to the token's creation re-attributes its whole history.
+- **Issuing a token** asks which of the issuer's orgs (or Personal) it belongs to, and **a team, which is required** (AIQG-101, decided by John 2026-11-25: "make it a required field so we can't get unassigned"). The team must be an active team of the org (else `400 team_required`; an org with no teams is `409 org_has_no_teams`). Issuing into a team needs being a member or manager of it, or an org owner/admin.
+- **Tokens nobody picks a team for** (the ones AIQG mints itself: demo-flow runs, SDLC Mode C ticks, audit asks) go to the **org's default team**, an append-only `aiqg.org_default_team` row set by an org owner/admin and audited (`org.default_team.set`). With none set, or the team archived, they are refused `team_required`.
+- **Existing tokens** stay where they are and keep working: all 631 of ours are in `65ea3247…`, which §5.0 links to the TAS org. Nothing places them automatically. Owners place them from Settings ▸ Organization ▸ *Place these tokens*, and are told once in the inbox (`org.tokens.unplaced`). A token is never moved back to "(no team)".
+- **Placement does not back-date** (AIQG-101). Placing an unplaced token takes effect from the moment it is placed; events before it stay reported at the tenant level ("(no team)", shown on Home as *Unplaced tokens*). `PUT /tokens/:id/placement` or a proposal accept with an earlier `valid_from` for an unplaced token is `400 placement_not_backdated`. A token that is already placed may still be moved from an earlier time, which re-attributes that stretch of its history.
 - **Report-under resolution** for one event, at the event's time:
 
 ```
 org    = event.tenant_id                         (an org tenant, or a personal tenant)
-team   = token_placement.team_id
+team   = token_placement.team_id                 (the placement in effect at the event's time;
+                                                  never back-dated past an unplaced stretch, AIQG-101)
          else person_default_team(resolved_person, org)
-         else '(no team)'
+         else '(no team)'                        (Home: "Unplaced tokens", not a scope)
 ```
 
 - **Agents, apps and repos** (`member_kind` agent / source_app / repo) are team members so that work with no known human, and proposals (§7), still land somewhere in the Involving view. They never decide billing.
